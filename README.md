@@ -2,6 +2,6 @@
 ## Installation
 ```
 mkdir build && cd build
-cmake -DCLASS=<class> ..
+cmake ..
 make
 ```

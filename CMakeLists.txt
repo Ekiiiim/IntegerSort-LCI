@@ -8,25 +8,7 @@ project(
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-# CLASS option (can be set at cmake time: cmake -DCLASS=B ..)
-set(CLASS
-    "A"
-    CACHE STRING "NPB problem class (S, W, A, B, C, D, or E)")
-set_property(
-  CACHE CLASS
-  PROPERTY STRINGS
-           S
-           W
-           A
-           B
-           C
-           D
-           E)
-string(TOUPPER "${CLASS}" CLASS_UPPER)
-if(NOT CLASS_UPPER MATCHES "^[SWABCDE]$")
-  message(
-    FATAL_ERROR "CLASS must be one of: S, W, A, B, C, D, or E (got: ${CLASS})")
-endif()
+set(NPB_CLASSES A B C D E)
 
 # Find required packages
 find_package(MPI REQUIRED COMPONENTS C CXX)
@@ -48,16 +30,16 @@ if(APPLE)
     PATHS /usr/local/include
     NO_DEFAULT_PATH)
 elseif(UNIX)
-    find_library(
-      LCI_LIBRARY
-      NAMES lci
-      PATHS $ENV{HOME}/opt/lci/lib64
-      NO_DEFAULT_PATH)
-    find_path(
-      LCI_INCLUDE_DIR
-      NAMES lci.hpp
-      PATHS $ENV{HOME}/opt/lci/include
-      NO_DEFAULT_PATH)
+  find_library(
+    LCI_LIBRARY
+    NAMES lci
+    PATHS $ENV{HOME}/opt/lci/lib64
+    NO_DEFAULT_PATH)
+  find_path(
+    LCI_INCLUDE_DIR
+    NAMES lci.hpp
+    PATHS $ENV{HOME}/opt/lci/include
+    NO_DEFAULT_PATH)
 endif()
 
 if(NOT LCI_LIBRARY)
