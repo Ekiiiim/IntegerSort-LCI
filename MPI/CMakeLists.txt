@@ -7,7 +7,7 @@ endif()
 
 find_package(MPI COMPONENTS C)
 
-if(NOT IS_BUILD_MPI)
+if(NOT MPI_FOUND)
   message(WARNING "Could not find MPI. MPI version of IS benchmark will not be built.")
   return()
 endif()
