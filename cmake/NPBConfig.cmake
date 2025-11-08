@@ -9,8 +9,8 @@ function(set_npb_definitions target class)
             COMPILETIME="${CMAKE_CURRENT_SOURCE_DIR}"
             MPICC="${MPI_C_COMPILER}"
             CFLAGS="${CMAKE_C_FLAGS}"
-            CLINK="$(MPICC)"
-            CLINKFLAGS="$(CFLAGS)"
-            CMPI_LIB="-L/usr/local/lib -lmpi -lpmpi"
-            CMPI_INC="-I/usr/local/include")
+            CLINK="${MPI_C_COMPILER}"
+            CLINKFLAGS="${CMAKE_C_FLAGS}"
+            CMPI_LIB="${MPI_C_LIBRARIES}"
+            CMPI_INC="${MPI_C_INCLUDE_DIRS}")
 endfunction()
