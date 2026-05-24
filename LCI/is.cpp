@@ -1,39 +1,61 @@
 /*************************************************************************
- *                                                                       * 
+ *                                                                       *
  *        N  A  S     P A R A L L E L     B E N C H M A R K S  3.4       *
- *                                                                       * 
- *                                  I S                                  * 
- *                                                                       * 
- ************************************************************************* 
- *                                                                       * 
+ *                                                                       *
+ *                                  I S                                  *
+ *                                                                       *
+ *************************************************************************
+ *                                                                       *
  *   This benchmark is part of the NAS Parallel Benchmark 3.4 suite.     *
- *   It is described in NAS Technical Report 95-020.                     * 
- *                                                                       * 
- *   Permission to use, copy, distribute and modify this software        * 
- *   for any purpose with or without fee is hereby granted.  We          * 
- *   request, however, that all derived work reference the NAS           * 
+ *   It is described in NAS Technical Report 95-020.                     *
+ *                                                                       *
+ *   Permission to use, copy, distribute and modify this software        *
+ *   for any purpose with or without fee is hereby granted.  We          *
+ *   request, however, that all derived work reference the NAS           *
  *   Parallel Benchmarks 3.4. This software is provided "as is"          *
- *   without express or implied warranty.                                * 
- *                                                                       * 
+ *   without express or implied warranty.                                *
+ *                                                                       *
  *   Information on NPB 3.4, including the technical report, the         *
- *   original specifications, source code, results and information       * 
- *   on how to submit new results, is available at:                      * 
- *                                                                       * 
- *          http://www.nas.nasa.gov/Software/NPB                         * 
- *                                                                       * 
- *   Send comments or suggestions to  npb@nas.nasa.gov                   * 
- *                                                                       * 
- *         NAS Parallel Benchmarks Group                                 * 
- *         NASA Ames Research Center                                     * 
- *         Moffett Field, CA   94035-1000                                * 
- *                                                                       * 
- ************************************************************************* 
- *                                                                       * 
- *   Author: M. Yarrow                                                   * 
- *           H. Jin                                                      * 
- *                                                                       * 
+ *   original specifications, source code, results and information       *
+ *   on how to submit new results, is available at:                      *
+ *                                                                       *
+ *          http://www.nas.nasa.gov/Software/NPB                         *
+ *                                                                       *
+ *   Send comments or suggestions to  npb@nas.nasa.gov                   *
+ *                                                                       *
+ *         NAS Parallel Benchmarks Group                                 *
+ *         NASA Ames Research Center                                     *
+ *         Moffett Field, CA   94035-1000                                *
+ *                                                                       *
+ *************************************************************************
+ *                                                                       *
+ *   Author: M. Yarrow                                                   *
+ *           H. Jin                                                      *
+ *                                                                       *
  *************************************************************************/
 
+/*************************************************************************
+ *  LCI + OpenMP variant of NPB IS -- Multithreaded Fine-grained
+ *  Asynchronous BSP (FA-BSP).
+ *
+ *  Each rank is one process with multiple OpenMP threads, communicating
+ *  through LCI. The workflow is:
+ *
+ *    Step 1  create_seq()  Generate Gaussian-distributed keys.
+ *    Step 2  rank()        Bin keys into buckets; reduce to global bucket
+ *                          sizes.
+ *    Step 3  rank()        Greedily assign buckets to processes
+ *                          (coarse load balancing).
+ *    Step 4  rank()        Redistribute keys with fine-grained active
+ *                          messages instead of MPI_Alltoallv: each thread
+ *                          batches keys into per-destination send buffers,
+ *                          flushes them when full, and concurrently
+ *                          progresses LCI to receive and tally keys.
+ *    Step 5  rank()        Parallel prefix sum over the key-frequency
+ *                          array to obtain the final key ranks.
+ *
+ *  Step 1 runs once; Steps 2-5 run every timed iteration in rank().
+ *************************************************************************/
 
 #include "a2a_tl_timers.hpp"
 
@@ -45,17 +67,15 @@
 #include <map>
 #include <atomic>
 
-
 /******************/
 /* default values */
 /******************/
 #ifndef CLASS
 #define CLASS 'S'
-#define NUM_PROCS            1                 
+#define NUM_PROCS            1
 #endif
 #define MIN_PROCS            1
 #define ONE                  1
-
 
 /*************/
 /*  CLASS S  */
@@ -65,7 +85,6 @@
 #define  MAX_KEY_LOG_2       11
 #define  NUM_BUCKETS_LOG_2   9
 #endif
-
 
 /*************/
 /*  CLASS W  */
@@ -85,7 +104,6 @@
 #define  NUM_BUCKETS_LOG_2   10
 #endif
 
-
 /*************/
 /*  CLASS B  */
 /*************/
@@ -95,7 +113,6 @@
 #define  NUM_BUCKETS_LOG_2   10
 #endif
 
-
 /*************/
 /*  CLASS C  */
 /*************/
@@ -104,7 +121,6 @@
 #define  MAX_KEY_LOG_2       23
 #define  NUM_BUCKETS_LOG_2   10
 #endif
-
 
 /*************/
 /*  CLASS D  */
@@ -116,7 +132,6 @@
 #undef   MIN_PROCS
 #define  MIN_PROCS           4
 #endif
-
 
 /*************/
 /*  CLASS E  */
@@ -131,9 +146,8 @@
 #define  ONE                 1L
 #endif
 
-
 /*******************************************************************
- * Defining MIN_PROCS is to avoid integer overflow for large problem 
+ * Defining MIN_PROCS is to avoid integer overflow for large problem
  * sizes without using a larger integer type, such as long int.
  * The actual total keys = TOTAL_KEYS * MIN_PROCS
  *******************************************************************/
@@ -156,15 +170,16 @@
 #define  MAX_ITERATIONS      10
 #define  TEST_ARRAY_SIZE     5
 
-
 /*****************************************************************/
-/* DEFINED BY USER: MESSAGE BATCH SIZE FOR ALLTOALLV             */
+/* Number of keys batched into one active message (Step 4).      */
+/* Capped to the eager-protocol limit; set in alloc_space().     */
 /*****************************************************************/
-// #define  MSG_BATCH_SIZE      (TOTAL_KEYS / (NUM_PROCS * 4))
 int msg_batch_size;
 int NUM_THREADS_PER_PROC;
 int NUM_DEVICES;
 int NUM_THREADS_PER_DEVICE;
+// Pre-allocated buffer for get_upacket_blocking when use_upacket is false
+void* preallocated_buffer = nullptr;
 
 /* Number of keys assigned to each processor
  * #define  NUM_KEYS            (TOTAL_KEYS/NUM_PROCS*MIN_PROCS)
@@ -172,8 +187,8 @@ int NUM_THREADS_PER_DEVICE;
 int num_keys;
 
 /*****************************************************************/
-/* On larger number of processors, since the keys are (roughly)  */ 
-/* gaussian distributed, the first and last processor sort keys  */ 
+/* On larger number of processors, since the keys are (roughly)  */
+/* gaussian distributed, the first and last processor sort keys  */
 /* in a large interval, requiring array sizes to be larger. Note */
 /* that for large NUM_PROCS, NUM_KEYS is, however, a small number*/
 /* The required array size also depends on the bucket size used. */
@@ -191,7 +206,6 @@ int num_keys;
  * #endif
  */
 int size_of_buffers;
-
 
 /***********************************/
 /* Enable separate communication,  */
@@ -217,7 +231,8 @@ int size_of_buffers;
 #define T_LAST   9
 #endif
 int timeron;
-
+int use_upacket;
+int use_loopback;
 
 /*************************************/
 /* Typedef: if necessary, change the */
@@ -233,8 +248,6 @@ typedef  int  KEY_TYPE;
 #endif
 #define MP_KEY_TYPE MPI_INT
 
-
-
 /********************/
 /* MPI properties:  */
 /********************/
@@ -249,7 +262,6 @@ lci::rcomp_t send_bucket_rcomp;
 lci::comp_t send_counter;
 std::vector<lci::device_t> devices;
 
-
 /********************/
 /* Some global info */
 /********************/
@@ -260,10 +272,7 @@ KEY_TYPE *cumulative_key_buff_ptr;
 INT_TYPE total_local_keys;             /* copies of rank info        */
 INT_TYPE min_key_val_global, max_key_val_global;
 
-
 int      passed_verification;
-                                 
-
 
 /************************************/
 /* These are the three main arrays. */
@@ -272,10 +281,9 @@ int      passed_verification;
 INT_TYPE *key_array,
          bucket_size[NUM_BUCKETS+TEST_ARRAY_SIZE],     /* Top 5 elements for */
          bucket_size_totals[NUM_BUCKETS+TEST_ARRAY_SIZE], /* part. ver. vals */
-         process_bucket_distrib_ptr1[NUM_BUCKETS+TEST_ARRAY_SIZE],   
-         process_bucket_distrib_ptr2[NUM_BUCKETS+TEST_ARRAY_SIZE],   
+         process_bucket_distrib_ptr1[NUM_BUCKETS+TEST_ARRAY_SIZE],
+         process_bucket_distrib_ptr2[NUM_BUCKETS+TEST_ARRAY_SIZE],
          bucket_i_to_process_ranks[NUM_BUCKETS+TEST_ARRAY_SIZE];
-
 
 /**********************/
 /* Partial verif info */
@@ -283,42 +291,40 @@ INT_TYPE *key_array,
 KEY_TYPE test_index_array[TEST_ARRAY_SIZE],
          test_rank_array[TEST_ARRAY_SIZE];
 
-int      S_test_index_array[TEST_ARRAY_SIZE] = 
+int      S_test_index_array[TEST_ARRAY_SIZE] =
                              {48427,17148,23627,62548,4431},
-         S_test_rank_array[TEST_ARRAY_SIZE] = 
+         S_test_rank_array[TEST_ARRAY_SIZE] =
                              {0,18,346,64917,65463},
 
-         W_test_index_array[TEST_ARRAY_SIZE] = 
+         W_test_index_array[TEST_ARRAY_SIZE] =
                              {357773,934767,875723,898999,404505},
-         W_test_rank_array[TEST_ARRAY_SIZE] = 
+         W_test_rank_array[TEST_ARRAY_SIZE] =
                              {1249,11698,1039987,1043896,1048018},
 
-         A_test_index_array[TEST_ARRAY_SIZE] = 
+         A_test_index_array[TEST_ARRAY_SIZE] =
                              {2112377,662041,5336171,3642833,4250760},
-         A_test_rank_array[TEST_ARRAY_SIZE] = 
+         A_test_rank_array[TEST_ARRAY_SIZE] =
                              {104,17523,123928,8288932,8388264},
 
-         B_test_index_array[TEST_ARRAY_SIZE] = 
+         B_test_index_array[TEST_ARRAY_SIZE] =
                              {41869,812306,5102857,18232239,26860214},
-         B_test_rank_array[TEST_ARRAY_SIZE] = 
-                             {33422937,10244,59149,33135281,99}, 
+         B_test_rank_array[TEST_ARRAY_SIZE] =
+                             {33422937,10244,59149,33135281,99},
 
-         C_test_index_array[TEST_ARRAY_SIZE] = 
+         C_test_index_array[TEST_ARRAY_SIZE] =
                              {44172927,72999161,74326391,129606274,21736814},
-         C_test_rank_array[TEST_ARRAY_SIZE] = 
+         C_test_rank_array[TEST_ARRAY_SIZE] =
                              {61147,882988,266290,133997595,133525895};
 
-long     D_test_index_array[TEST_ARRAY_SIZE] = 
+long     D_test_index_array[TEST_ARRAY_SIZE] =
                              {1317351170,995930646,1157283250,1503301535,1453734525},
-         D_test_rank_array[TEST_ARRAY_SIZE] = 
+         D_test_rank_array[TEST_ARRAY_SIZE] =
                              {1,36538729,1978098519,2145192618,2147425337},
 
-         E_test_index_array[TEST_ARRAY_SIZE] = 
+         E_test_index_array[TEST_ARRAY_SIZE] =
                              {21492309536L,24606226181L,12608530949L,4065943607L,3324513396L},
-         E_test_rank_array[TEST_ARRAY_SIZE] = 
+         E_test_rank_array[TEST_ARRAY_SIZE] =
                              {3L,27580354L,3248475153L,30048754302L,31485259697L};
-
-
 
 /***********************/
 /* function prototypes */
@@ -333,7 +339,7 @@ extern "C" {
 
 void c_print_results( const char   *name,
                       char   _class,
-                      int    n1, 
+                      int    n1,
                       int    n2,
                       int    n3,
                       int    niter,
@@ -360,7 +366,6 @@ void c_print_results( const char   *name,
 #include <iostream>
 #include <unistd.h>
 
-
 /*****************************************************************/
 /*     Dynamically allocate space for main arrays                */
 /*****************************************************************/
@@ -372,7 +377,11 @@ void alloc_space(void)
    /* to ensure use of eager protocol. This value can be set using */
    /* env variable LCI_ATTR_PACKET_SIZE. */
    msg_batch_size = lci::get_max_bcopy_size() / sizeof(INT_TYPE) - 1;
-   if (my_rank == 0) fprintf(stderr, "msg_batch_size = %d\n", msg_batch_size);
+
+   /* Pre-allocate buffer for get_upacket_blocking when use_upacket is false */
+   if (!use_upacket && preallocated_buffer == nullptr) {
+       preallocated_buffer = malloc(msg_batch_size * sizeof(INT_TYPE) * comm_size * omp_get_max_threads());
+   }
 
    /* buffer size for communication */
    if ( comm_size < 256 )
@@ -390,7 +399,7 @@ void alloc_space(void)
    cumulative_key_buff_ptr = (KEY_TYPE *)malloc(sizeof(KEY_TYPE)*size_of_buffers);
 
    if (!key_array || !key_buff1 || !cumulative_key_buff_ptr) {
-      printf("ERROR: memoy allocation failed\n");
+      printf("ERROR: memory allocation failed\n");
       lci::g_runtime_fina();
       exit(1);
    }
@@ -409,7 +418,6 @@ void free_space(void)
    key_buff1 = NULL;
    cumulative_key_buff_ptr = NULL;
 }
-
 
 /*
  *    FUNCTION RANDLC (X, A)
@@ -443,7 +451,6 @@ void free_space(void)
  *  exact on all systems.  This code assumes that 0.5D0 is represented exactly.
  */
 
-
 /*****************************************************************/
 /*************           R  A  N  D  L  C             ************/
 /*************                                        ************/
@@ -462,13 +469,13 @@ double	randlc( double *X, double *A )
       double		Z;
       int     		i, j;
 
-      if (KS == 0) 
+      if (KS == 0)
       {
         R23 = 1.0;
         R46 = 1.0;
         T23 = 1.0;
         T46 = 1.0;
-    
+
         for (i=1; i<=23; i++)
         {
           R23 = 0.50 * R23;
@@ -498,7 +505,7 @@ double	randlc( double *X, double *A )
       X1 = j;
       X2 = *X - T23 * X1;
       T1 = A1 * X2 + A2 * X1;
-      
+
       j  = R23 * T1;
       T2 = j;
       Z = T1 - T23 * T2;
@@ -507,9 +514,7 @@ double	randlc( double *X, double *A )
       T4 = j;
       *X = T3 - T46 * T4;
       return(R46 * *X);
-} 
-
-
+}
 
 /*****************************************************************/
 /************   F  I  N  D  _  M  Y  _  S  E  E  D    ************/
@@ -519,8 +524,8 @@ double	randlc( double *X, double *A )
 
 /*
  * Create a random number sequence of total length nn residing
- * on np number of processors.  Each processor will therefore have a 
- * subsequence of length nn/np.  This routine returns that random 
+ * on np number of processors.  Each processor will therefore have a
+ * subsequence of length nn/np.  This routine returns that random
  * number which is the first random number for the subsequence belonging
  * to processor rank kn, and which is used as seed for proc kn ran # gen.
  */
@@ -536,8 +541,6 @@ double   find_my_seed( int  kn,       /* my processor rank, 0<=kn<=num procs */
 
   double t1,t2,t3,an;
   long   mq,nq,kk,ik;
-
-
 
       nq = nn / np;
 
@@ -558,9 +561,9 @@ double   find_my_seed( int  kn,       /* my processor rank, 0<=kn<=num procs */
       for( i=1; i<=100; i++ )
       {
         ik = kk / 2;
-        if( 2 * ik !=  kk ) 
+        if( 2 * ik !=  kk )
             t3 = randlc( &t1, &t2 );
-        if( ik == 0 ) 
+        if( ik == 0 )
             break;
         t3 = randlc( &t2, &t2 );
         kk = ik;
@@ -570,48 +573,99 @@ double   find_my_seed( int  kn,       /* my processor rank, 0<=kn<=num procs */
 
 }
 
+/*****************************************************************/
+/*************   C  H  E  C  K  _  U  S  E  _  U  P  A  C  K  E  T  **/
+/*****************************************************************/
+int check_use_upacket_flag( void )
+{
+    int upacket_on = 1;  // default to enabled
+    char *ev = getenv("USE_UPACKET");
 
+    if (ev) {
+        if (*ev == '\0')
+            upacket_on = 1;
+        else if (*ev >= '1' && *ev <= '9')
+            upacket_on = 1;
+        else if (strcmp(ev, "on") == 0 || strcmp(ev, "ON") == 0 ||
+                 strcmp(ev, "yes") == 0 || strcmp(ev, "YES") == 0 ||
+                 strcmp(ev, "true") == 0 || strcmp(ev, "TRUE") == 0)
+            upacket_on = 1;
+        else if (strcmp(ev, "off") == 0 || strcmp(ev, "OFF") == 0 ||
+                 strcmp(ev, "no") == 0 || strcmp(ev, "NO") == 0 ||
+                 strcmp(ev, "false") == 0 || strcmp(ev, "FALSE") == 0 ||
+                 strcmp(ev, "0") == 0)
+            upacket_on = 0;
+    }
 
+    return upacket_on;
+}
+
+/*****************************************************************/
+/*************   C  H  E  C  K  _  L  O  O  P  B  A  C  K  **********/
+/*****************************************************************/
+int check_loopback_flag( void )
+{
+    int loopback_on = 1;  // default to enabled
+    char *ev = getenv("LOOPBACK");
+
+    if (ev) {
+        if (*ev == '\0')
+            loopback_on = 1;
+        else if (*ev >= '1' && *ev <= '9')
+            loopback_on = 1;
+        else if (strcmp(ev, "on") == 0 || strcmp(ev, "ON") == 0 ||
+                 strcmp(ev, "yes") == 0 || strcmp(ev, "YES") == 0 ||
+                 strcmp(ev, "true") == 0 || strcmp(ev, "TRUE") == 0)
+            loopback_on = 1;
+        else if (strcmp(ev, "off") == 0 || strcmp(ev, "OFF") == 0 ||
+                 strcmp(ev, "no") == 0 || strcmp(ev, "NO") == 0 ||
+                 strcmp(ev, "false") == 0 || strcmp(ev, "FALSE") == 0 ||
+                 strcmp(ev, "0") == 0)
+            loopback_on = 0;
+    }
+
+    return loopback_on;
+}
 
 /*****************************************************************/
 /*************      C  R  E  A  T  E  _  S  E  Q      ************/
 /*****************************************************************/
 
+/*
+ * Step 1: generate this rank's keys with the NPB randlc() generator. Each
+ * key is the sum of four uniform random values, giving a Gaussian-like
+ * distribution over [0, MAX_KEY).
+ */
 void	create_seq( double seed, double a )
 {
 	double x;
 	int    i, k;
 
-        k = MAX_KEY/4;
+	k = MAX_KEY/4;
 
 	for (i=0; i<num_keys; i++)
 	{
-	    x = randlc(&seed, &a);
-	    x += randlc(&seed, &a);
-    	    x += randlc(&seed, &a);
-	    x += randlc(&seed, &a);  
+		x = randlc(&seed, &a);
+		x += randlc(&seed, &a);
+		x += randlc(&seed, &a);
+		x += randlc(&seed, &a);
 
-            key_array[i] = k*x;
+		key_array[i] = k*x;
 	}
 }
-
-
-
 
 /*****************************************************************/
 /*************    F  U  L  L  _  V  E  R  I  F  Y     ************/
 /*****************************************************************/
 
-
 void full_verify( void )
 {
     lci::comp_t sync = lci::alloc_sync();
     lci::comp_t sync_send = lci::alloc_sync();
-    
+
     INT_TYPE    i, j;
     INT_TYPE    k, last_local_key;
 
-    
     TIMER_START( T_VERIFY );
 
 /*  Now, finally, sort the keys:  */
@@ -625,7 +679,7 @@ void full_verify( void )
 
 /*  Send largest key value to next processor  */
     if( my_rank > 0 )
-        lci::post_recv_x(my_rank-1, &k, 1 * sizeof(INT_TYPE), 1000, sync).device(devices[0]).allow_done(false)();                  
+        lci::post_recv_x(my_rank-1, &k, 1 * sizeof(INT_TYPE), 1000, sync).device(devices[0]).allow_done(false)();
     if( my_rank < comm_size-1 ) {
         last_local_key = (idx == 0) ? idx : (idx - 1);
         while (lci::post_send_x(my_rank + 1, &key_array[last_local_key], 1 * sizeof(INT_TYPE), 1000, sync_send).device(devices[0]).allow_done(false)().is_retry()) {
@@ -638,20 +692,18 @@ void full_verify( void )
 
     free_comp(&sync);
 
-/*  Confirm that neighbor's greatest key value 
-    is not greater than my least key value       */              
+/*  Confirm that neighbor's greatest key value
+    is not greater than my least key value       */
     j = 0;
     if( my_rank > 0 && total_local_keys > 0 )
         if( k > key_array[0] )
             j++;
-
 
 /*  Confirm keys correctly sorted: count incorrectly sorted keys, if any */
     #pragma omp parallel for schedule(static) reduction(+:j)
     for( i=1; i<total_local_keys; i++ )
         if( key_array[i-1] > key_array[i] )
             j++;
-
 
     if( j != 0 )
     {
@@ -660,20 +712,14 @@ void full_verify( void )
     }
     else
         passed_verification++;
-           
+
     TIMER_STOP( T_VERIFY );
 
 }
 
-
-
-
-
-
 // /*****************************************************************/
 // /*************        SUM_OP FOR REDUCE           ****************/
 // /*****************************************************************/
-
 
 void sum_op_int(const void* left, const void* right, void* dst, size_t n)
 {
@@ -695,12 +741,9 @@ void sum_op_double(const void* left, const void* right, void* dst, size_t n)
     }
 }
 
-
-
 // /*****************************************************************/
 // /*************        MAX_OP FOR REDUCE           ****************/
 // /*****************************************************************/
-
 
 void max_op(const void* left, const void* right, void* dst, size_t n)
 {
@@ -712,12 +755,9 @@ void max_op(const void* left, const void* right, void* dst, size_t n)
     }
 }
 
-
-
 // /*****************************************************************/
 // /*************        MIN_OP FOR REDUCE           ****************/
 // /*****************************************************************/
-
 
 void min_op(const void* left, const void* right, void* dst, size_t n)
 {
@@ -729,19 +769,25 @@ void min_op(const void* left, const void* right, void* dst, size_t n)
     }
 }
 
-
-
 // /*****************************************************************/
 // /*************      ACTIVE MESSAGE HANDLER        ****************/
 // /*****************************************************************/
 
+/* Keys this process has received and tallied so far this iteration; the     */
+/* Step 4 redistribution loop spins on it to know when all expected keys     */
+/* have arrived. Cache-line padded to avoid false sharing.                   */
 alignas(64) std::atomic<size_t> global_recv_count{0};
 char padding[64 - sizeof(global_recv_count)];
 
 const size_t KEY_SIZE = sizeof(INT_TYPE);
 
+/*
+ * Tally a batch of received keys into the key-frequency array (key_buff_ptr):
+ * the slot for value v counts how many keys equal v. This frequency array is
+ * what Step 5 prefix-sums into ranks. Runs on every thread, so increments
+ * are atomic.
+ */
 void handle_received_keys(const void* src, size_t num_of_keys) {
-    // count in columns: for each key, key_buff_ptr[key]++
     const INT_TYPE* keys = static_cast<const INT_TYPE*>(src);
     for (size_t i = 0; i < num_of_keys; ++i) {
         key_buff_ptr[keys[i]].fetch_add(1, std::memory_order_relaxed);
@@ -749,6 +795,9 @@ void handle_received_keys(const void* src, size_t num_of_keys) {
     global_recv_count.fetch_add(num_of_keys, std::memory_order_relaxed);
 }
 
+/* LCI active-message handler: invoked on the receiver when a batch of keys   */
+/* arrives, tallies them into the key-frequency array, and recycles the      */
+/* packet when zero-copy upackets are in use.                                */
 void am_handler(lci::status_t status)
 {
 #ifdef A2A_TL_TIMERS
@@ -759,24 +808,35 @@ void am_handler(lci::status_t status)
     TL_STEP_STOP(A2A_AM_COPY);
     TL_ADD_BYTES(A2A_AM_COPY, status.get_size());
 #endif
-    lci::put_upacket(status.get_buffer());
-}
-
-
-
-// /*****************************************************************/
-// /*************        CUSTOM AllToAllv            ****************/
-// /*****************************************************************/
-
-static inline void* get_upacket_blocking(lci::device_t device) {
-    void* upacket = lci::get_upacket();
-    while (upacket == nullptr) {
-        upacket = lci::get_upacket();
-        lci::progress_x().device(device)();
+    if (use_upacket) {
+        lci::put_upacket(status.get_buffer());
     }
-    return upacket;
 }
 
+static inline void* get_upacket_blocking(lci::device_t device, int dest_rank) {
+    if (use_upacket) {
+        void* upacket = lci::get_upacket();
+        while (upacket == nullptr) {
+            upacket = lci::get_upacket();
+            lci::progress_x().device(device)();
+        }
+        return upacket;
+    } else {
+        // Return pre-allocated buffer when upacket is disabled
+        // Each rank allocates its own buffer pool: comm_size * num_threads buffers
+        // Index: (thread_id * comm_size + dest_rank) * msg_batch_size
+        int thread_id = omp_get_thread_num();
+        int buffer_index = (thread_id * comm_size + dest_rank) * msg_batch_size;
+        return static_cast<void*>(static_cast<INT_TYPE*>(preallocated_buffer) + buffer_index);
+    }
+}
+
+/*
+ * Per-destination send buffer (Step 4): a thread appends keys bound for one
+ * destination process and flushes the whole buffer as a single active message
+ * once it fills (msg_batch_size keys). Backed by either an LCI zero-copy
+ * packet ("upacket") or a slot in preallocated_buffer.
+ */
 class SendBuffer {
   public:
     SendBuffer() = default;
@@ -791,9 +851,9 @@ class SendBuffer {
         size_ = 0;
     }
 
-    void push(INT_TYPE key, lci::device_t device) {
+    void push(INT_TYPE key, lci::device_t device, int dest_rank) {
         if (!buf_) {
-            buf_ = get_upacket_blocking(device);
+            buf_ = get_upacket_blocking(device, dest_rank);
             buf_int_ = static_cast<INT_TYPE*>(buf_);
         }
         buf_int_[size_++] = key;
@@ -810,7 +870,9 @@ class SendBuffer {
     int size_ = 0;
 };
 
-
+/* Flush one destination's batched keys as an active message, retrying until  */
+/* LCI accepts it. Loopback optimization: if the destination is this same     */
+/* process, invoke the handler directly instead of messaging ourselves.       */
 void flush_send_buffer(std::vector<SendBuffer>& send_buffers, int dest_rank, lci::device_t device) {
     SendBuffer& send_buf = send_buffers[dest_rank];
     if (send_buf.empty()) return;
@@ -818,12 +880,15 @@ void flush_send_buffer(std::vector<SendBuffer>& send_buffers, int dest_rank, lci
 #ifdef A2A_TL_TIMERS
     TL_STEP_START(A2A_FLUSH_SEND);
 #endif
-    if (dest_rank == my_rank) {
+    /* Loopback optimization: destination is the local process. */
+    if (dest_rank == my_rank && use_loopback) {
 #ifdef A2A_TL_TIMERS
         TL_STEP_START(A2A_SELF_COPY);
 #endif
         handle_received_keys(send_buf.data(), send_buf.size());
-        lci::put_upacket(send_buf.data());
+        if (use_upacket) {
+            lci::put_upacket(send_buf.data());
+        }
 #ifdef A2A_TL_TIMERS
         TL_STEP_STOP(A2A_SELF_COPY);
         TL_ADD_BYTES(A2A_SELF_COPY, send_buf.size_in_bytes());
@@ -844,18 +909,16 @@ void flush_send_buffer(std::vector<SendBuffer>& send_buffers, int dest_rank, lci
     send_buf.release();
 }
 
-
-
-void send_key_to_processor(INT_TYPE key, int dest_rank, size_t typesize,
+/* Route one key to its destination's send buffer, flushing that buffer as an */
+/* active message once it reaches msg_batch_size keys.                        */
+void send_key_to_processor(INT_TYPE key, int dest_rank,
                            std::vector<SendBuffer>& send_buffers,
                            lci::device_t device) {
-    send_buffers[dest_rank].push(key, device);
+    send_buffers[dest_rank].push(key, device, dest_rank);
     if (send_buffers[dest_rank].size() >= msg_batch_size) {
         flush_send_buffer(send_buffers, dest_rank, device);
     }
 }
-
-
 
 void flush_all_send_buffers(std::vector<SendBuffer>& send_buffers, lci::device_t device) {
     for (int i = 0; i < comm_size; ++i) {
@@ -865,8 +928,6 @@ void flush_all_send_buffers(std::vector<SendBuffer>& send_buffers, lci::device_t
         }
     }
 }
-
-
 
 // /*****************************************************************/
 // /*************        ALLOCATE DEVICES            ****************/
@@ -892,18 +953,12 @@ void allocate_devices() {
     NUM_THREADS_PER_PROC = omp_get_max_threads();
     NUM_THREADS_PER_DEVICE = get_num_threads_per_device();
     NUM_DEVICES = (NUM_THREADS_PER_PROC / NUM_THREADS_PER_DEVICE);
-    fprintf(stderr, "Allocating %d devices on rank %d with %d threads\n", 
-            NUM_DEVICES, my_rank, NUM_THREADS_PER_PROC);
 
     size_t npackets = lci::get_default_packet_pool().get_attr_npackets();
     size_t max_nrecvs_per_device = std::min(npackets / 8 / NUM_DEVICES, 4096UL);
     size_t max_nsends_per_device = std::min(npackets / 4 / lci::get_rank_n() / NUM_DEVICES, 64UL);
     max_nsends_per_device = std::max(max_nsends_per_device, 4UL);
-    
-    char hostname[256];
-    gethostname(hostname, sizeof(hostname));
-    // fprintf(stderr, "Allocating %d devices on rank %d, max_nsends_per_device = %zu, max_nrecvs_per_device = %zu (hostname: %s)\n", 
-    //         NUM_DEVICES, my_rank, max_nsends_per_device, max_nrecvs_per_device, hostname);
+
     for (int i = 0; i < NUM_DEVICES; ++i) {
         devices.push_back(lci::alloc_device_x().net_max_sends(max_nsends_per_device).net_max_recvs(max_nrecvs_per_device)());
     }
@@ -920,13 +975,16 @@ void free_devices() {
     devices.clear();
 }
 
-
-
 // /*****************************************************************/
 // /*************             R  A  N  K             ****************/
 // /*****************************************************************/
 
-
+/*
+ * One timed iteration of the sorting. Workflow:
+ * bin keys into buckets (Step 2), greedily assign buckets to processes
+ * (Step 3), redistribute keys via active messages (Step 4), then prefix-sum
+ * the resulting key-frequency array into ranks (Step 5).
+ */
 void rank( int iteration )
 {
     INT_TYPE    i, k;
@@ -938,22 +996,19 @@ void rank( int iteration )
     INT_TYPE    expected_recv_count;
     INT_TYPE    min_key_val, max_key_val;
 
-
-
     TIMER_START( T_RANK );
     TIMER_START( T_RANK_1 );
 
-/*  Iteration alteration of keys */  
-    if(my_rank == 0 )                    
+/*  Iteration alteration of keys */
+    if(my_rank == 0 )
     {
       key_array[iteration] = iteration;
       key_array[iteration+MAX_ITERATIONS] = MAX_KEY - iteration;
     }
 
-
 /*  Initialize */
     #pragma omp parallel for schedule(static)
-    for( i=0; i<NUM_BUCKETS+TEST_ARRAY_SIZE; i++ )  
+    for( i=0; i<NUM_BUCKETS+TEST_ARRAY_SIZE; i++ )
     {
         bucket_size[i] = 0;
         bucket_size_totals[i] = 0;
@@ -969,13 +1024,15 @@ void rank( int iteration )
 /*  top of array bucket_size                                     */
     for( i=0; i<TEST_ARRAY_SIZE; i++ )
         if( (test_index_array[i]/num_keys) == my_rank )
-            bucket_size[NUM_BUCKETS+i] = 
+            bucket_size[NUM_BUCKETS+i] =
                           key_array[test_index_array[i] % num_keys];
 
     TIMER_START( T_RANK_1_1 );
 
-/*  Determine the number of keys in each bucket */
-    #pragma omp parallel 
+/*  Step 2: organize keys into buckets -- count keys per local bucket    */
+/*  (threads build private histograms, then merge; the global reduce     */
+/*  below completes Step 2).                                             */
+    #pragma omp parallel
     {
         int bucket_size_private[NUM_BUCKETS] = {0};
         #pragma omp for nowait
@@ -990,27 +1047,27 @@ void rank( int iteration )
         }
     }
 
-
     TIMER_STOP( T_RANK_1_1 );
     TIMER_STOP( T_RANK_1 );
     TIMER_STOP( T_RANK );
 
     TIMER_START( T_RCOMM );
 
-/*  Get the bucket size totals for the entire problem. These 
+/*  Get the bucket size totals for the entire problem. These
     will be used to determine the redistribution of keys      */
     lci::reduce_x(bucket_size, bucket_size_totals, NUM_BUCKETS+TEST_ARRAY_SIZE, sizeof(INT_TYPE), sum_op_int, 0).device(devices[0])();
     lci::broadcast_x(bucket_size_totals, (NUM_BUCKETS+TEST_ARRAY_SIZE) * sizeof(INT_TYPE), 0).device(devices[0])();
 
     TIMER_STOP( T_RCOMM );
-    
+
     TIMER_START( T_RANK );
     TIMER_START( T_RANK_2 );
 
-/*  Determine Redistibution of keys: accumulate the bucket size totals 
-    till this number surpasses NUM_KEYS (which the average number of keys
+/*  Step 3: greedily assign buckets to processes (coarse load balancing).
+    Accumulate the bucket size totals until the running total surpasses
+    NUM_KEYS (which is the average number of keys
     per processor).  Then all keys in these buckets go to processor 0.
-    Continue accumulating again until supassing 2*NUM_KEYS. All keys
+    Continue accumulating again until surpassing 2*NUM_KEYS. All keys
     in these buckets go to processor 1, etc.  This algorithm guarantees
     that all processors have work ranking; no processors are left idle.
     The optimum number of buckets, however, does not result in as high
@@ -1019,7 +1076,7 @@ void rank( int iteration )
     more buckets results in more computation per processor so that the
     optimum number of buckets turns out to be 1024 for machines tested.
     Note that process_bucket_distrib_ptr1 and ..._ptr2 hold the bucket
-    number of first and last bucket which each processor will have after   
+    number of first and last bucket which each processor will have after
     the redistribution is done.                                          */
 
     bucket_sum_accumulator = 0;
@@ -1028,21 +1085,21 @@ void rank( int iteration )
     expected_recv_count = 0;
     INT_TYPE previous_bucket_sum_accumulator = 0;
 
-    for( i=0, j=0; i<NUM_BUCKETS; i++ )  
+    for( i=0, j=0; i<NUM_BUCKETS; i++ )
     {
         bucket_sum_accumulator       += bucket_size_totals[i];
         local_bucket_sum_accumulator += bucket_size[i];
 
         bucket_i_to_process_ranks[i] = j;  // map bucket index to processor rank
 
-        if( bucket_sum_accumulator >= (j+1)*num_keys )  
+        if( bucket_sum_accumulator >= (j+1)*num_keys )
         {
             if ( j == my_rank ) {
                 expected_recv_count = bucket_sum_accumulator - previous_bucket_sum_accumulator;
             }
             if( j != 0 )
             {
-                process_bucket_distrib_ptr1[j] = 
+                process_bucket_distrib_ptr1[j] =
                                         process_bucket_distrib_ptr2[j-1]+1;
             }
             process_bucket_distrib_ptr2[j++] = i;
@@ -1061,8 +1118,8 @@ void rank( int iteration )
     }
 
 /*  The starting and ending bucket numbers on each processor are
-    multiplied by the interval size of the buckets to obtain the 
-    smallest possible min and greatest possible max value of any 
+    multiplied by the interval size of the buckets to obtain the
+    smallest possible min and greatest possible max value of any
     key on each processor                                          */
     min_key_val = process_bucket_distrib_ptr1[my_rank] << shift;
     max_key_val = ((process_bucket_distrib_ptr2[my_rank] + 1) << shift)-1;
@@ -1074,22 +1131,21 @@ void rank( int iteration )
         cumulative_key_buff_ptr[i] = 0;
     }
 
-/*  Determine the total number of keys on all other 
+/*  Determine the total number of keys on all other
     processors holding keys of lesser value         */
     m = 0;
     for( k=0; k<my_rank; k++ )
         for( i= process_bucket_distrib_ptr1[k];
              i<=process_bucket_distrib_ptr2[k];
-             i++ )  
+             i++ )
             m += bucket_size_totals[i]; /*  m has total # of lesser keys */
 
 /*  Determine total number of keys on this processor */
-    j = 0;                                 
+    j = 0;
     for( i= process_bucket_distrib_ptr1[my_rank];
          i<=process_bucket_distrib_ptr2[my_rank];
-         i++ )  
+         i++ )
         j += bucket_size_totals[i];     /* j has total # of local keys   */
-
 
 /*  Ranking of all keys occurs in this section:                 */
 /*  shift it backwards so no subtractions are necessary in loop */
@@ -1106,8 +1162,11 @@ void rank( int iteration )
     a2atl::init(omp_get_max_threads());
 #endif
 
-
-/*  send keys to corresponding processor based on the bucket it belongs to */
+/*  Step 4: redistribute keys with fine-grained active messages. Each thread
+    routes each of its keys to the process that owns the key's bucket, batching
+    into per-destination send buffers and flushing them as active messages,
+    then progresses LCI until this process has received all expected keys
+    (tallied by handle_received_keys).                                         */
     #pragma omp parallel
     {
         int thread_id = omp_get_thread_num();
@@ -1117,13 +1176,15 @@ void rank( int iteration )
         #pragma omp for nowait
         for (i=0; i<num_keys; i++) {
             auto dest_rank = bucket_i_to_process_ranks[key_array[i] >> shift];
-            send_key_to_processor(key_array[i], dest_rank, KEY_SIZE, send_buffers, device);
+            send_key_to_processor(key_array[i], dest_rank, send_buffers, device);
         }
         flush_all_send_buffers(send_buffers, device);
 
     #ifdef A2A_TL_TIMERS
         TL_STEP_START(A2A_PROGRESS_WAIT);
     #endif
+        /* Pick up incoming active messages until every expected key has  */
+        /* arrived and been tallied into the key-frequency array.         */
         while (global_recv_count.load() < expected_recv_count) {
             lci::progress_x().device(device)();
         }
@@ -1133,10 +1194,9 @@ void rank( int iteration )
     #endif
     }
 
-
     TIMER_STOP( T_ALLTOALL );
     TIMER_STOP( T_RCOMM );
-    
+
     #ifdef A2A_TL_TIMERS
     a2atl::stamp_wait_total();
     if (my_rank == 0) {
@@ -1145,28 +1205,72 @@ void rank( int iteration )
     }
     #endif
 
-
     TIMER_START( T_RANK );
     TIMER_START( T_RANK_3 );
 
-/*  To obtain ranks of each key, successively add the individual key
-    population, not forgetting the total of lesser keys, m.
-    NOTE: Since the total of lesser keys would be subtracted later 
-    in verification, it is no longer added to the first key population 
-    here, but still needed during the partial verify test.  This is to 
-    ensure that 32-bit key_buff can still be used for class D.           */
-/*    key_buff_ptr[min_key_val] += m;    */
+/*  Step 5: compute final key ranks by prefix-summing the key-frequency
+    array. Successively add each key population, not forgetting the total of
+    lesser keys, m.
+    NOTE: Since the total of lesser keys would be subtracted later
+    in verification, it is no longer added to the first key population
+    here, but still needed during the partial verify test.  This is to
+    ensure that 32-bit key_buff can still be used for class D.
+    The scan is parallel: per-thread partial sums, an exclusive scan of
+    those into offsets, then each thread scans its chunk from its offset.  */
     KEY_TYPE* cumulative = cumulative_key_buff_ptr - min_key_val;
-    cumulative[min_key_val] = key_buff_ptr[min_key_val];
-    for( i=min_key_val; i<max_key_val; i++ ) {
-        cumulative[i+1] = cumulative[i] + key_buff_ptr[i+1];
+    const INT_TYPE start_key = min_key_val;
+    const INT_TYPE N = max_key_val - min_key_val + 1;
+
+    std::vector<KEY_TYPE> partial_sums;
+
+    #pragma omp parallel
+    {
+        int nthreads = omp_get_num_threads();
+        int tid = omp_get_thread_num();
+
+        #pragma omp single
+        {
+            partial_sums.resize(nthreads);
+        }
+
+        // Each thread calculates the sum of its local chunk
+        KEY_TYPE local_sum = 0;
+        #pragma omp for schedule(static) nowait
+        for (INT_TYPE i = 0; i < N; i++) {
+            local_sum += key_buff_ptr[start_key + i].load(std::memory_order_relaxed);
+        }
+        partial_sums[tid] = local_sum;
+
+        #pragma omp barrier
+
+        // One thread computes the exclusive prefix sum of the partial sums.
+        // This gives each thread its starting offset.
+        #pragma omp single
+        {
+            KEY_TYPE temp_sum = 0;
+            for (int i = 0; i < nthreads; i++) {
+                KEY_TYPE val = partial_sums[i];
+                partial_sums[i] = temp_sum; // partial_sums[tid] now holds the offset
+                temp_sum += val;
+            }
+        }
+        // Barrier is implicit after 'single'
+
+        // Each thread performs a sequential scan on its local chunk,
+        // starting from the offset computed in the sequential pass.
+        KEY_TYPE offset = partial_sums[tid];
+        #pragma omp for schedule(static)
+        for (INT_TYPE i = 0; i < N; i++) {
+            offset += key_buff_ptr[start_key + i].load(std::memory_order_relaxed);
+            cumulative[start_key + i] = offset;
+        }
     }
 
 /* This is the partial verify test section */
 /* Observe that test_rank_array vals are   */
 /* shifted differently for different cases */
     for( i=0; i<TEST_ARRAY_SIZE; i++ )
-    {                                             
+    {
         k = bucket_size_totals[i+NUM_BUCKETS];    /* Keys were hidden here */
         if( min_key_val <= k  &&  k <= max_key_val )
         {
@@ -1213,7 +1317,7 @@ void rank( int iteration )
                     else
                         test_rank -= iteration;
                     break;
-                 case 'E':
+                case 'E':
                     if( i < 2 )
                         test_rank += iteration - 2;
                     else if( i == 2 )
@@ -1234,11 +1338,10 @@ void rank( int iteration )
                 passed_verification++;
             if( failed == 1 )
                 printf( "Failed partial verification: "
-                        "iteration %d, processor %d, test key %d, key rank %ld\n", 
+                        "iteration %d, processor %d, test key %d, key rank %ld\n",
                          iteration, my_rank, (int)i, (long)key_rank );
         }
     }
-
 
     TIMER_STOP( T_RANK_3 );
     TIMER_STOP( T_RANK );
@@ -1255,7 +1358,7 @@ void rank( int iteration )
     in rank are local; making them global slows down the code, probably
     since they cannot be made register by compiler                        */
 
-    if( iteration == MAX_ITERATIONS ) 
+    if( iteration == MAX_ITERATIONS )
     {
         key_buff_ptr_global = key_buff_ptr;
         min_key_val_global = min_key_val;
@@ -1263,8 +1366,7 @@ void rank( int iteration )
         total_local_keys    = j;
     }
 
-}      
-
+}
 
 /*****************************************************************/
 /*************             M  A  I  N             ****************/
@@ -1276,7 +1378,6 @@ int main( int argc, char **argv )
     int             i, iteration, itemp, active;
 
     double          timecounter, maxtime;
-
 
 /*  Initialize MPI and LCI */
     setvbuf(stderr, nullptr, _IONBF, 0);
@@ -1298,7 +1399,6 @@ int main( int argc, char **argv )
        lci::g_runtime_fina();
        exit( 1 );
     }
-
 
 /*  comm_size needs to be power of two */
     for (comm_size = 1; comm_size < np_total; comm_size *= 2);
@@ -1342,7 +1442,6 @@ int main( int argc, char **argv )
         exit( 0 );
     }
 
-
 /*  Initialize the verification arrays if a valid class */
     #pragma omp parallel for schedule(static)
     for( i=0; i<TEST_ARRAY_SIZE; i++ )
@@ -1377,7 +1476,6 @@ int main( int argc, char **argv )
                 test_rank_array[i]  = E_test_rank_array[i];
                 break;
         };
-        
 
 /*  Printout initial NPB info */
     if( my_rank == 0 )
@@ -1389,13 +1487,25 @@ int main( int argc, char **argv )
         if ( comm_size != np_total )
             printf( " WARNING: Number of processes"
                     " is not a power of two (%d active)\n", comm_size );
-
+        use_upacket = check_use_upacket_flag();
+        use_loopback = check_loopback_flag();
         timeron = check_timer_flag();
+
+        if (use_upacket)
+            printf( " Using upacket for buffer management\n" );
+        else
+            printf( " Using malloc/free for buffer management\n" );
+        if (use_loopback)
+            printf( " Loopback optimization: ENABLED\n" );
+        else
+            printf( " Loopback optimization: DISABLED\n" );
     }
 
+    lci::broadcast_x(&use_upacket, 1 * sizeof(int), 0).device(devices[0])();
+    lci::broadcast_x(&use_loopback, 1 * sizeof(int), 0).device(devices[0])();
     lci::broadcast_x(&timeron, 1 * sizeof(int), 0).device(devices[0])();
 
-#ifdef  TIMING_ENABLED 
+#ifdef  TIMING_ENABLED
     #pragma omp parallel for schedule(static)
     for( i=1; i<=T_LAST; i++ ) timer_clear( i );
 #endif
@@ -1404,8 +1514,8 @@ int main( int argc, char **argv )
     alloc_space();
 
 /*  Generate random number sequence and subsequent keys on all procs */
-    create_seq( find_my_seed( my_rank, 
-                              comm_size, 
+    create_seq( find_my_seed( my_rank,
+                              comm_size,
                               4*(long)TOTAL_KEYS*MIN_PROCS,
                               314159265.00,      /* Random number gen seed */
                               1220703125.00 ),   /* Random number gen mult */
@@ -1413,31 +1523,30 @@ int main( int argc, char **argv )
 
 /*  Initialize LCI active message properties */
     send_counter = lci::alloc_counter();
-    send_bucket_handler = lci::alloc_handler_x(am_handler).zero_copy_am(true)();
+    send_bucket_handler = lci::alloc_handler_x(am_handler).zero_copy_am(use_upacket == 1)();
     send_bucket_rcomp = lci::register_rcomp(send_bucket_handler);
     lci::barrier_x().device(devices[0])();
 
-/*  Do one interation for free (i.e., untimed) to guarantee initialization of  
+/*  Do one interation for free (i.e., untimed) to guarantee initialization of
     all data and code pages and respective tables */
-    rank( 1 );  
+    rank( 1 );
 
 /*  Start verification counter */
     passed_verification = 0;
 
     if( my_rank == 0 && CLASS != 'S' ) printf( "\n   iteration\n" );
 
-/*  Initialize timer  */             
+/*  Initialize timer  */
     timer_clear( 0 );
 
 /*  Initialize separate communication, computation timing */
-#ifdef  TIMING_ENABLED 
+#ifdef  TIMING_ENABLED
     #pragma omp parallel for schedule(static)
     for( i=1; i<=T_LAST; i++ ) timer_clear( i );
 #endif
 
-/*  Start timer  */             
+/*  Start timer  */
     timer_start( 0 );
-
 
 /*  This is the main iteration */
     for( iteration=1; iteration<=MAX_ITERATIONS; iteration++ )
@@ -1447,7 +1556,6 @@ int main( int argc, char **argv )
         rank( iteration );
     }
 
-
 /*  Stop timer, obtain time for processors */
     timer_stop( 0 );
 
@@ -1456,11 +1564,9 @@ int main( int argc, char **argv )
 /*  End of timing, obtain maximum time of all processors */
     lci::reduce_x(&timecounter, &maxtime, 1, sizeof(double), max_op, 0).device(devices[0])();
 
-
 /*  This tests that keys are in sequence: sorting of last ranked key seq
     occurs here, but is an untimed operation                             */
     full_verify();
-
 
 /*  Obtain verification counter sum */
     itemp = passed_verification;
@@ -1468,11 +1574,12 @@ int main( int argc, char **argv )
 
     free_space();
 
-
 /*  The final printout  */
     if( my_rank == 0 )
     {
-        if( passed_verification != 5*MAX_ITERATIONS + comm_size )
+        /* Partial verification (5 tests/iteration) + full verification (per rank) */
+        int expected_verification = 5*MAX_ITERATIONS + comm_size;
+        if( passed_verification != expected_verification )
             passed_verification = 0;
         c_print_results( "IS",
                          CLASS,
@@ -1485,7 +1592,7 @@ int main( int argc, char **argv )
                          maxtime,
                          ((double) (MAX_ITERATIONS)*TOTAL_KEYS*MIN_PROCS)
                                                       /maxtime/1000000.,
-                         "keys ranked", 
+                         "keys ranked",
                          passed_verification,
                          NPBVERSION,
                          COMPILETIME,
@@ -1496,14 +1603,13 @@ int main( int argc, char **argv )
                          CFLAGS,
                          CLINKFLAGS );
     }
-                    
 
 #ifdef  TIMING_ENABLED
     if (timeron)
     {
         double    t1[T_LAST+1], tmin[T_LAST+1], tsum[T_LAST+1], tmax[T_LAST+1];
         char      t_recs[T_LAST+1][9];
-    
+
         #pragma omp parallel for schedule(static)
         for( i=0; i<=T_LAST; i++ )
             t1[i] = timer_read( i );
@@ -1528,7 +1634,7 @@ int main( int argc, char **argv )
             for( i=0; i<=T_LAST; i++ )
             {
                 printf( " timer %2d (%-8s):  %10.4f  %10.4f  %10.4f\n",
-                        i+1, t_recs[i], tmin[i], tmax[i], 
+                        i+1, t_recs[i], tmin[i], tmax[i],
                         tsum[i]/((double) comm_size) );
             }
             printf( "\n" );
@@ -1537,9 +1643,13 @@ int main( int argc, char **argv )
 #endif
 
     lci::free_comp(&send_bucket_handler);
+    // Free pre-allocated buffer
+    if (preallocated_buffer != nullptr) {
+        free(preallocated_buffer);
+        preallocated_buffer = nullptr;
+    }
     free_devices();
     lci::g_runtime_fina();
-
 
     return 0;
          /**************************/

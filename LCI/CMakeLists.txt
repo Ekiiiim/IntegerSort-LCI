@@ -40,7 +40,7 @@ endif()
 
 message(STATUS "Building LCI version of IS benchmark")
 
-set(IS_LCI_ENABLE_TIMERS A2A_TL_TIMERS CACHE STRING "Enable timers in LCI IS benchmark")
+option(IS_LCI_ENABLE_TIMERS "Enable LCI alltoall thread-local timer profiling (verbose per-iteration output; off by default)" OFF)
 
 foreach(CLASS ${NPB_CLASSES})
   set(TARGET_NAME is_lci_${CLASS})
@@ -55,7 +55,9 @@ foreach(CLASS ${NPB_CLASSES})
   target_link_libraries(${TARGET_NAME} PRIVATE common OpenMP::OpenMP_CXX LCI::lci)
 
   # Compile definitions
-  target_compile_definitions(${TARGET_NAME} PRIVATE ${IS_LCI_ENABLE_TIMERS})
+  if(IS_LCI_ENABLE_TIMERS)
+    target_compile_definitions(${TARGET_NAME} PRIVATE A2A_TL_TIMERS)
+  endif()
   set_npb_definitions(${TARGET_NAME} ${CLASS})
 
   # Output directory

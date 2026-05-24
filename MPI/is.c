@@ -926,10 +926,6 @@ void rank( int iteration )
 
     TIMER_STOP( T_RANK ); 
 
-    fprintf(stderr, "LB {\"iter\":%d,\"rank\":%d,\"total_local_keys\":%lld,\"cumulative_rcomp\":%.6f}\n", 
-        iteration, my_rank, (long long)j, timer_read(T_RANK));
-
-
 /*  Make copies of rank info for use by full_verify: these variables
     in rank are local; making them global slows down the code, probably
     since they cannot be made register by compiler                        */
