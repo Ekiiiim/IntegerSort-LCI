@@ -1,39 +1,38 @@
 /*************************************************************************
- *                                                                       * 
+ *                                                                       *
  *        N  A  S     P A R A L L E L     B E N C H M A R K S  3.4       *
- *                                                                       * 
- *                                  I S                                  * 
- *                                                                       * 
- ************************************************************************* 
- *                                                                       * 
+ *                                                                       *
+ *                                  I S                                  *
+ *                                                                       *
+ *************************************************************************
+ *                                                                       *
  *   This benchmark is part of the NAS Parallel Benchmark 3.4 suite.     *
- *   It is described in NAS Technical Report 95-020.                     * 
- *                                                                       * 
- *   Permission to use, copy, distribute and modify this software        * 
- *   for any purpose with or without fee is hereby granted.  We          * 
- *   request, however, that all derived work reference the NAS           * 
+ *   It is described in NAS Technical Report 95-020.                     *
+ *                                                                       *
+ *   Permission to use, copy, distribute and modify this software        *
+ *   for any purpose with or without fee is hereby granted.  We          *
+ *   request, however, that all derived work reference the NAS           *
  *   Parallel Benchmarks 3.4. This software is provided "as is"          *
- *   without express or implied warranty.                                * 
- *                                                                       * 
+ *   without express or implied warranty.                                *
+ *                                                                       *
  *   Information on NPB 3.4, including the technical report, the         *
- *   original specifications, source code, results and information       * 
- *   on how to submit new results, is available at:                      * 
- *                                                                       * 
- *          http://www.nas.nasa.gov/Software/NPB                         * 
- *                                                                       * 
- *   Send comments or suggestions to  npb@nas.nasa.gov                   * 
- *                                                                       * 
- *         NAS Parallel Benchmarks Group                                 * 
- *         NASA Ames Research Center                                     * 
- *         Moffett Field, CA   94035-1000                                * 
- *                                                                       * 
- ************************************************************************* 
- *                                                                       * 
- *   Author: M. Yarrow                                                   * 
- *           H. Jin                                                      * 
- *                                                                       * 
+ *   original specifications, source code, results and information       *
+ *   on how to submit new results, is available at:                      *
+ *                                                                       *
+ *          http://www.nas.nasa.gov/Software/NPB                         *
+ *                                                                       *
+ *   Send comments or suggestions to  npb@nas.nasa.gov                   *
+ *                                                                       *
+ *         NAS Parallel Benchmarks Group                                 *
+ *         NASA Ames Research Center                                     *
+ *         Moffett Field, CA   94035-1000                                *
+ *                                                                       *
+ *************************************************************************
+ *                                                                       *
+ *   Author: M. Yarrow                                                   *
+ *           H. Jin                                                      *
+ *                                                                       *
  *************************************************************************/
-
 
 #include "a2a_tl_timers.hpp"
 
@@ -45,17 +44,15 @@
 #include <map>
 #include <atomic>
 
-
 /******************/
 /* default values */
 /******************/
 #ifndef CLASS
 #define CLASS 'S'
-#define NUM_PROCS            1                 
+#define NUM_PROCS            1
 #endif
 #define MIN_PROCS            1
 #define ONE                  1
-
 
 /*************/
 /*  CLASS S  */
@@ -65,7 +62,6 @@
 #define  MAX_KEY_LOG_2       11
 #define  NUM_BUCKETS_LOG_2   9
 #endif
-
 
 /*************/
 /*  CLASS W  */
@@ -85,7 +81,6 @@
 #define  NUM_BUCKETS_LOG_2   10
 #endif
 
-
 /*************/
 /*  CLASS B  */
 /*************/
@@ -95,7 +90,6 @@
 #define  NUM_BUCKETS_LOG_2   10
 #endif
 
-
 /*************/
 /*  CLASS C  */
 /*************/
@@ -104,7 +98,6 @@
 #define  MAX_KEY_LOG_2       23
 #define  NUM_BUCKETS_LOG_2   10
 #endif
-
 
 /*************/
 /*  CLASS D  */
@@ -116,7 +109,6 @@
 #undef   MIN_PROCS
 #define  MIN_PROCS           4
 #endif
-
 
 /*************/
 /*  CLASS E  */
@@ -131,9 +123,8 @@
 #define  ONE                 1L
 #endif
 
-
 /*******************************************************************
- * Defining MIN_PROCS is to avoid integer overflow for large problem 
+ * Defining MIN_PROCS is to avoid integer overflow for large problem
  * sizes without using a larger integer type, such as long int.
  * The actual total keys = TOTAL_KEYS * MIN_PROCS
  *******************************************************************/
@@ -156,7 +147,6 @@
 #define  MAX_ITERATIONS      10
 #define  TEST_ARRAY_SIZE     5
 
-
 /*****************************************************************/
 /* DEFINED BY USER: MESSAGE BATCH SIZE FOR ALLTOALLV             */
 /*****************************************************************/
@@ -172,8 +162,8 @@ int NUM_THREADS_PER_DEVICE;
 int num_keys;
 
 /*****************************************************************/
-/* On larger number of processors, since the keys are (roughly)  */ 
-/* gaussian distributed, the first and last processor sort keys  */ 
+/* On larger number of processors, since the keys are (roughly)  */
+/* gaussian distributed, the first and last processor sort keys  */
 /* in a large interval, requiring array sizes to be larger. Note */
 /* that for large NUM_PROCS, NUM_KEYS is, however, a small number*/
 /* The required array size also depends on the bucket size used. */
@@ -191,7 +181,6 @@ int num_keys;
  * #endif
  */
 int size_of_buffers;
-
 
 /***********************************/
 /* Enable separate communication,  */
@@ -233,8 +222,6 @@ typedef  int  KEY_TYPE;
 #endif
 #define MP_KEY_TYPE MPI_INT
 
-
-
 /********************/
 /* MPI properties:  */
 /********************/
@@ -249,7 +236,6 @@ lci::rcomp_t send_bucket_rcomp;
 lci::comp_t send_counter;
 std::vector<lci::device_t> devices;
 
-
 /********************/
 /* Some global info */
 /********************/
@@ -260,10 +246,7 @@ KEY_TYPE *cumulative_key_buff_ptr;
 INT_TYPE total_local_keys;             /* copies of rank info        */
 INT_TYPE min_key_val_global, max_key_val_global;
 
-
 int      passed_verification;
-                                 
-
 
 /************************************/
 /* These are the three main arrays. */
@@ -272,10 +255,9 @@ int      passed_verification;
 INT_TYPE *key_array,
          bucket_size[NUM_BUCKETS+TEST_ARRAY_SIZE],     /* Top 5 elements for */
          bucket_size_totals[NUM_BUCKETS+TEST_ARRAY_SIZE], /* part. ver. vals */
-         process_bucket_distrib_ptr1[NUM_BUCKETS+TEST_ARRAY_SIZE],   
-         process_bucket_distrib_ptr2[NUM_BUCKETS+TEST_ARRAY_SIZE],   
+         process_bucket_distrib_ptr1[NUM_BUCKETS+TEST_ARRAY_SIZE],
+         process_bucket_distrib_ptr2[NUM_BUCKETS+TEST_ARRAY_SIZE],
          bucket_i_to_process_ranks[NUM_BUCKETS+TEST_ARRAY_SIZE];
-
 
 /**********************/
 /* Partial verif info */
@@ -283,42 +265,40 @@ INT_TYPE *key_array,
 KEY_TYPE test_index_array[TEST_ARRAY_SIZE],
          test_rank_array[TEST_ARRAY_SIZE];
 
-int      S_test_index_array[TEST_ARRAY_SIZE] = 
+int      S_test_index_array[TEST_ARRAY_SIZE] =
                              {48427,17148,23627,62548,4431},
-         S_test_rank_array[TEST_ARRAY_SIZE] = 
+         S_test_rank_array[TEST_ARRAY_SIZE] =
                              {0,18,346,64917,65463},
 
-         W_test_index_array[TEST_ARRAY_SIZE] = 
+         W_test_index_array[TEST_ARRAY_SIZE] =
                              {357773,934767,875723,898999,404505},
-         W_test_rank_array[TEST_ARRAY_SIZE] = 
+         W_test_rank_array[TEST_ARRAY_SIZE] =
                              {1249,11698,1039987,1043896,1048018},
 
-         A_test_index_array[TEST_ARRAY_SIZE] = 
+         A_test_index_array[TEST_ARRAY_SIZE] =
                              {2112377,662041,5336171,3642833,4250760},
-         A_test_rank_array[TEST_ARRAY_SIZE] = 
+         A_test_rank_array[TEST_ARRAY_SIZE] =
                              {104,17523,123928,8288932,8388264},
 
-         B_test_index_array[TEST_ARRAY_SIZE] = 
+         B_test_index_array[TEST_ARRAY_SIZE] =
                              {41869,812306,5102857,18232239,26860214},
-         B_test_rank_array[TEST_ARRAY_SIZE] = 
-                             {33422937,10244,59149,33135281,99}, 
+         B_test_rank_array[TEST_ARRAY_SIZE] =
+                             {33422937,10244,59149,33135281,99},
 
-         C_test_index_array[TEST_ARRAY_SIZE] = 
+         C_test_index_array[TEST_ARRAY_SIZE] =
                              {44172927,72999161,74326391,129606274,21736814},
-         C_test_rank_array[TEST_ARRAY_SIZE] = 
+         C_test_rank_array[TEST_ARRAY_SIZE] =
                              {61147,882988,266290,133997595,133525895};
 
-long     D_test_index_array[TEST_ARRAY_SIZE] = 
+long     D_test_index_array[TEST_ARRAY_SIZE] =
                              {1317351170,995930646,1157283250,1503301535,1453734525},
-         D_test_rank_array[TEST_ARRAY_SIZE] = 
+         D_test_rank_array[TEST_ARRAY_SIZE] =
                              {1,36538729,1978098519,2145192618,2147425337},
 
-         E_test_index_array[TEST_ARRAY_SIZE] = 
+         E_test_index_array[TEST_ARRAY_SIZE] =
                              {21492309536L,24606226181L,12608530949L,4065943607L,3324513396L},
-         E_test_rank_array[TEST_ARRAY_SIZE] = 
+         E_test_rank_array[TEST_ARRAY_SIZE] =
                              {3L,27580354L,3248475153L,30048754302L,31485259697L};
-
-
 
 /***********************/
 /* function prototypes */
@@ -333,7 +313,7 @@ extern "C" {
 
 void c_print_results( const char   *name,
                       char   _class,
-                      int    n1, 
+                      int    n1,
                       int    n2,
                       int    n3,
                       int    niter,
@@ -359,7 +339,6 @@ void c_print_results( const char   *name,
 #include "../common/c_timers.h"
 #include <iostream>
 #include <unistd.h>
-
 
 /*****************************************************************/
 /*     Dynamically allocate space for main arrays                */
@@ -410,7 +389,6 @@ void free_space(void)
    cumulative_key_buff_ptr = NULL;
 }
 
-
 /*
  *    FUNCTION RANDLC (X, A)
  *
@@ -443,7 +421,6 @@ void free_space(void)
  *  exact on all systems.  This code assumes that 0.5D0 is represented exactly.
  */
 
-
 /*****************************************************************/
 /*************           R  A  N  D  L  C             ************/
 /*************                                        ************/
@@ -462,13 +439,13 @@ double	randlc( double *X, double *A )
       double		Z;
       int     		i, j;
 
-      if (KS == 0) 
+      if (KS == 0)
       {
         R23 = 1.0;
         R46 = 1.0;
         T23 = 1.0;
         T46 = 1.0;
-    
+
         for (i=1; i<=23; i++)
         {
           R23 = 0.50 * R23;
@@ -498,7 +475,7 @@ double	randlc( double *X, double *A )
       X1 = j;
       X2 = *X - T23 * X1;
       T1 = A1 * X2 + A2 * X1;
-      
+
       j  = R23 * T1;
       T2 = j;
       Z = T1 - T23 * T2;
@@ -507,9 +484,7 @@ double	randlc( double *X, double *A )
       T4 = j;
       *X = T3 - T46 * T4;
       return(R46 * *X);
-} 
-
-
+}
 
 /*****************************************************************/
 /************   F  I  N  D  _  M  Y  _  S  E  E  D    ************/
@@ -519,8 +494,8 @@ double	randlc( double *X, double *A )
 
 /*
  * Create a random number sequence of total length nn residing
- * on np number of processors.  Each processor will therefore have a 
- * subsequence of length nn/np.  This routine returns that random 
+ * on np number of processors.  Each processor will therefore have a
+ * subsequence of length nn/np.  This routine returns that random
  * number which is the first random number for the subsequence belonging
  * to processor rank kn, and which is used as seed for proc kn ran # gen.
  */
@@ -536,8 +511,6 @@ double   find_my_seed( int  kn,       /* my processor rank, 0<=kn<=num procs */
 
   double t1,t2,t3,an;
   long   mq,nq,kk,ik;
-
-
 
       nq = nn / np;
 
@@ -558,9 +531,9 @@ double   find_my_seed( int  kn,       /* my processor rank, 0<=kn<=num procs */
       for( i=1; i<=100; i++ )
       {
         ik = kk / 2;
-        if( 2 * ik !=  kk ) 
+        if( 2 * ik !=  kk )
             t3 = randlc( &t1, &t2 );
-        if( ik == 0 ) 
+        if( ik == 0 )
             break;
         t3 = randlc( &t2, &t2 );
         kk = ik;
@@ -582,36 +555,31 @@ void	create_seq( double seed, double a )
 	double x;
 	int    i, k;
 
-        k = MAX_KEY/4;
+	k = MAX_KEY/4;
 
 	for (i=0; i<num_keys; i++)
 	{
-	    x = randlc(&seed, &a);
-	    x += randlc(&seed, &a);
-    	    x += randlc(&seed, &a);
-	    x += randlc(&seed, &a);  
+		x = randlc(&seed, &a);
+		x += randlc(&seed, &a);
+		x += randlc(&seed, &a);
+		x += randlc(&seed, &a);
 
-            key_array[i] = k*x;
+		key_array[i] = k*x;
 	}
 }
-
-
-
 
 /*****************************************************************/
 /*************    F  U  L  L  _  V  E  R  I  F  Y     ************/
 /*****************************************************************/
 
-
 void full_verify( void )
 {
     lci::comp_t sync = lci::alloc_sync();
     lci::comp_t sync_send = lci::alloc_sync();
-    
+
     INT_TYPE    i, j;
     INT_TYPE    k, last_local_key;
 
-    
     TIMER_START( T_VERIFY );
 
 /*  Now, finally, sort the keys:  */
@@ -625,7 +593,7 @@ void full_verify( void )
 
 /*  Send largest key value to next processor  */
     if( my_rank > 0 )
-        lci::post_recv_x(my_rank-1, &k, 1 * sizeof(INT_TYPE), 1000, sync).device(devices[0]).allow_done(false)();                  
+        lci::post_recv_x(my_rank-1, &k, 1 * sizeof(INT_TYPE), 1000, sync).device(devices[0]).allow_done(false)();
     if( my_rank < comm_size-1 ) {
         last_local_key = (idx == 0) ? idx : (idx - 1);
         while (lci::post_send_x(my_rank + 1, &key_array[last_local_key], 1 * sizeof(INT_TYPE), 1000, sync_send).device(devices[0]).allow_done(false)().is_retry()) {
@@ -638,20 +606,18 @@ void full_verify( void )
 
     free_comp(&sync);
 
-/*  Confirm that neighbor's greatest key value 
-    is not greater than my least key value       */              
+/*  Confirm that neighbor's greatest key value
+    is not greater than my least key value       */
     j = 0;
     if( my_rank > 0 && total_local_keys > 0 )
         if( k > key_array[0] )
             j++;
-
 
 /*  Confirm keys correctly sorted: count incorrectly sorted keys, if any */
     #pragma omp parallel for schedule(static) reduction(+:j)
     for( i=1; i<total_local_keys; i++ )
         if( key_array[i-1] > key_array[i] )
             j++;
-
 
     if( j != 0 )
     {
@@ -660,20 +626,14 @@ void full_verify( void )
     }
     else
         passed_verification++;
-           
+
     TIMER_STOP( T_VERIFY );
 
 }
 
-
-
-
-
-
 // /*****************************************************************/
 // /*************        SUM_OP FOR REDUCE           ****************/
 // /*****************************************************************/
-
 
 void sum_op_int(const void* left, const void* right, void* dst, size_t n)
 {
@@ -695,12 +655,9 @@ void sum_op_double(const void* left, const void* right, void* dst, size_t n)
     }
 }
 
-
-
 // /*****************************************************************/
 // /*************        MAX_OP FOR REDUCE           ****************/
 // /*****************************************************************/
-
 
 void max_op(const void* left, const void* right, void* dst, size_t n)
 {
@@ -712,12 +669,9 @@ void max_op(const void* left, const void* right, void* dst, size_t n)
     }
 }
 
-
-
 // /*****************************************************************/
 // /*************        MIN_OP FOR REDUCE           ****************/
 // /*****************************************************************/
-
 
 void min_op(const void* left, const void* right, void* dst, size_t n)
 {
@@ -728,8 +682,6 @@ void min_op(const void* left, const void* right, void* dst, size_t n)
         dst_[i] = (left_[i] < right_[i]) ? left_[i] : right_[i];
     }
 }
-
-
 
 // /*****************************************************************/
 // /*************      ACTIVE MESSAGE HANDLER        ****************/
@@ -761,8 +713,6 @@ void am_handler(lci::status_t status)
 #endif
     lci::put_upacket(status.get_buffer());
 }
-
-
 
 // /*****************************************************************/
 // /*************        CUSTOM AllToAllv            ****************/
@@ -810,7 +760,6 @@ class SendBuffer {
     int size_ = 0;
 };
 
-
 void flush_send_buffer(std::vector<SendBuffer>& send_buffers, int dest_rank, lci::device_t device) {
     SendBuffer& send_buf = send_buffers[dest_rank];
     if (send_buf.empty()) return;
@@ -844,8 +793,6 @@ void flush_send_buffer(std::vector<SendBuffer>& send_buffers, int dest_rank, lci
     send_buf.release();
 }
 
-
-
 void send_key_to_processor(INT_TYPE key, int dest_rank, size_t typesize,
                            std::vector<SendBuffer>& send_buffers,
                            lci::device_t device) {
@@ -855,8 +802,6 @@ void send_key_to_processor(INT_TYPE key, int dest_rank, size_t typesize,
     }
 }
 
-
-
 void flush_all_send_buffers(std::vector<SendBuffer>& send_buffers, lci::device_t device) {
     for (int i = 0; i < comm_size; ++i) {
         auto index = (my_rank + i) % comm_size; // start from self rank
@@ -865,8 +810,6 @@ void flush_all_send_buffers(std::vector<SendBuffer>& send_buffers, lci::device_t
         }
     }
 }
-
-
 
 // /*****************************************************************/
 // /*************        ALLOCATE DEVICES            ****************/
@@ -920,12 +863,9 @@ void free_devices() {
     devices.clear();
 }
 
-
-
 // /*****************************************************************/
 // /*************             R  A  N  K             ****************/
 // /*****************************************************************/
-
 
 void rank( int iteration )
 {
@@ -938,22 +878,19 @@ void rank( int iteration )
     INT_TYPE    expected_recv_count;
     INT_TYPE    min_key_val, max_key_val;
 
-
-
     TIMER_START( T_RANK );
     TIMER_START( T_RANK_1 );
 
-/*  Iteration alteration of keys */  
-    if(my_rank == 0 )                    
+/*  Iteration alteration of keys */
+    if(my_rank == 0 )
     {
       key_array[iteration] = iteration;
       key_array[iteration+MAX_ITERATIONS] = MAX_KEY - iteration;
     }
 
-
 /*  Initialize */
     #pragma omp parallel for schedule(static)
-    for( i=0; i<NUM_BUCKETS+TEST_ARRAY_SIZE; i++ )  
+    for( i=0; i<NUM_BUCKETS+TEST_ARRAY_SIZE; i++ )
     {
         bucket_size[i] = 0;
         bucket_size_totals[i] = 0;
@@ -969,13 +906,13 @@ void rank( int iteration )
 /*  top of array bucket_size                                     */
     for( i=0; i<TEST_ARRAY_SIZE; i++ )
         if( (test_index_array[i]/num_keys) == my_rank )
-            bucket_size[NUM_BUCKETS+i] = 
+            bucket_size[NUM_BUCKETS+i] =
                           key_array[test_index_array[i] % num_keys];
 
     TIMER_START( T_RANK_1_1 );
 
 /*  Determine the number of keys in each bucket */
-    #pragma omp parallel 
+    #pragma omp parallel
     {
         int bucket_size_private[NUM_BUCKETS] = {0};
         #pragma omp for nowait
@@ -990,24 +927,23 @@ void rank( int iteration )
         }
     }
 
-
     TIMER_STOP( T_RANK_1_1 );
     TIMER_STOP( T_RANK_1 );
     TIMER_STOP( T_RANK );
 
     TIMER_START( T_RCOMM );
 
-/*  Get the bucket size totals for the entire problem. These 
+/*  Get the bucket size totals for the entire problem. These
     will be used to determine the redistribution of keys      */
     lci::reduce_x(bucket_size, bucket_size_totals, NUM_BUCKETS+TEST_ARRAY_SIZE, sizeof(INT_TYPE), sum_op_int, 0).device(devices[0])();
     lci::broadcast_x(bucket_size_totals, (NUM_BUCKETS+TEST_ARRAY_SIZE) * sizeof(INT_TYPE), 0).device(devices[0])();
 
     TIMER_STOP( T_RCOMM );
-    
+
     TIMER_START( T_RANK );
     TIMER_START( T_RANK_2 );
 
-/*  Determine Redistibution of keys: accumulate the bucket size totals 
+/*  Determine Redistibution of keys: accumulate the bucket size totals
     till this number surpasses NUM_KEYS (which the average number of keys
     per processor).  Then all keys in these buckets go to processor 0.
     Continue accumulating again until supassing 2*NUM_KEYS. All keys
@@ -1019,7 +955,7 @@ void rank( int iteration )
     more buckets results in more computation per processor so that the
     optimum number of buckets turns out to be 1024 for machines tested.
     Note that process_bucket_distrib_ptr1 and ..._ptr2 hold the bucket
-    number of first and last bucket which each processor will have after   
+    number of first and last bucket which each processor will have after
     the redistribution is done.                                          */
 
     bucket_sum_accumulator = 0;
@@ -1028,21 +964,21 @@ void rank( int iteration )
     expected_recv_count = 0;
     INT_TYPE previous_bucket_sum_accumulator = 0;
 
-    for( i=0, j=0; i<NUM_BUCKETS; i++ )  
+    for( i=0, j=0; i<NUM_BUCKETS; i++ )
     {
         bucket_sum_accumulator       += bucket_size_totals[i];
         local_bucket_sum_accumulator += bucket_size[i];
 
         bucket_i_to_process_ranks[i] = j;  // map bucket index to processor rank
 
-        if( bucket_sum_accumulator >= (j+1)*num_keys )  
+        if( bucket_sum_accumulator >= (j+1)*num_keys )
         {
             if ( j == my_rank ) {
                 expected_recv_count = bucket_sum_accumulator - previous_bucket_sum_accumulator;
             }
             if( j != 0 )
             {
-                process_bucket_distrib_ptr1[j] = 
+                process_bucket_distrib_ptr1[j] =
                                         process_bucket_distrib_ptr2[j-1]+1;
             }
             process_bucket_distrib_ptr2[j++] = i;
@@ -1061,8 +997,8 @@ void rank( int iteration )
     }
 
 /*  The starting and ending bucket numbers on each processor are
-    multiplied by the interval size of the buckets to obtain the 
-    smallest possible min and greatest possible max value of any 
+    multiplied by the interval size of the buckets to obtain the
+    smallest possible min and greatest possible max value of any
     key on each processor                                          */
     min_key_val = process_bucket_distrib_ptr1[my_rank] << shift;
     max_key_val = ((process_bucket_distrib_ptr2[my_rank] + 1) << shift)-1;
@@ -1074,22 +1010,21 @@ void rank( int iteration )
         cumulative_key_buff_ptr[i] = 0;
     }
 
-/*  Determine the total number of keys on all other 
+/*  Determine the total number of keys on all other
     processors holding keys of lesser value         */
     m = 0;
     for( k=0; k<my_rank; k++ )
         for( i= process_bucket_distrib_ptr1[k];
              i<=process_bucket_distrib_ptr2[k];
-             i++ )  
+             i++ )
             m += bucket_size_totals[i]; /*  m has total # of lesser keys */
 
 /*  Determine total number of keys on this processor */
-    j = 0;                                 
+    j = 0;
     for( i= process_bucket_distrib_ptr1[my_rank];
          i<=process_bucket_distrib_ptr2[my_rank];
-         i++ )  
+         i++ )
         j += bucket_size_totals[i];     /* j has total # of local keys   */
-
 
 /*  Ranking of all keys occurs in this section:                 */
 /*  shift it backwards so no subtractions are necessary in loop */
@@ -1105,7 +1040,6 @@ void rank( int iteration )
 #ifdef A2A_TL_TIMERS
     a2atl::init(omp_get_max_threads());
 #endif
-
 
 /*  send keys to corresponding processor based on the bucket it belongs to */
     #pragma omp parallel
@@ -1133,10 +1067,9 @@ void rank( int iteration )
     #endif
     }
 
-
     TIMER_STOP( T_ALLTOALL );
     TIMER_STOP( T_RCOMM );
-    
+
     #ifdef A2A_TL_TIMERS
     a2atl::stamp_wait_total();
     if (my_rank == 0) {
@@ -1145,15 +1078,14 @@ void rank( int iteration )
     }
     #endif
 
-
     TIMER_START( T_RANK );
     TIMER_START( T_RANK_3 );
 
 /*  To obtain ranks of each key, successively add the individual key
     population, not forgetting the total of lesser keys, m.
-    NOTE: Since the total of lesser keys would be subtracted later 
-    in verification, it is no longer added to the first key population 
-    here, but still needed during the partial verify test.  This is to 
+    NOTE: Since the total of lesser keys would be subtracted later
+    in verification, it is no longer added to the first key population
+    here, but still needed during the partial verify test.  This is to
     ensure that 32-bit key_buff can still be used for class D.           */
 /*    key_buff_ptr[min_key_val] += m;    */
     KEY_TYPE* cumulative = cumulative_key_buff_ptr - min_key_val;
@@ -1166,7 +1098,7 @@ void rank( int iteration )
 /* Observe that test_rank_array vals are   */
 /* shifted differently for different cases */
     for( i=0; i<TEST_ARRAY_SIZE; i++ )
-    {                                             
+    {
         k = bucket_size_totals[i+NUM_BUCKETS];    /* Keys were hidden here */
         if( min_key_val <= k  &&  k <= max_key_val )
         {
@@ -1213,7 +1145,7 @@ void rank( int iteration )
                     else
                         test_rank -= iteration;
                     break;
-                 case 'E':
+                case 'E':
                     if( i < 2 )
                         test_rank += iteration - 2;
                     else if( i == 2 )
@@ -1234,11 +1166,10 @@ void rank( int iteration )
                 passed_verification++;
             if( failed == 1 )
                 printf( "Failed partial verification: "
-                        "iteration %d, processor %d, test key %d, key rank %ld\n", 
+                        "iteration %d, processor %d, test key %d, key rank %ld\n",
                          iteration, my_rank, (int)i, (long)key_rank );
         }
     }
-
 
     TIMER_STOP( T_RANK_3 );
     TIMER_STOP( T_RANK );
@@ -1255,7 +1186,7 @@ void rank( int iteration )
     in rank are local; making them global slows down the code, probably
     since they cannot be made register by compiler                        */
 
-    if( iteration == MAX_ITERATIONS ) 
+    if( iteration == MAX_ITERATIONS )
     {
         key_buff_ptr_global = key_buff_ptr;
         min_key_val_global = min_key_val;
@@ -1263,8 +1194,7 @@ void rank( int iteration )
         total_local_keys    = j;
     }
 
-}      
-
+}
 
 /*****************************************************************/
 /*************             M  A  I  N             ****************/
@@ -1276,7 +1206,6 @@ int main( int argc, char **argv )
     int             i, iteration, itemp, active;
 
     double          timecounter, maxtime;
-
 
 /*  Initialize MPI and LCI */
     setvbuf(stderr, nullptr, _IONBF, 0);
@@ -1298,7 +1227,6 @@ int main( int argc, char **argv )
        lci::g_runtime_fina();
        exit( 1 );
     }
-
 
 /*  comm_size needs to be power of two */
     for (comm_size = 1; comm_size < np_total; comm_size *= 2);
@@ -1342,7 +1270,6 @@ int main( int argc, char **argv )
         exit( 0 );
     }
 
-
 /*  Initialize the verification arrays if a valid class */
     #pragma omp parallel for schedule(static)
     for( i=0; i<TEST_ARRAY_SIZE; i++ )
@@ -1377,7 +1304,6 @@ int main( int argc, char **argv )
                 test_rank_array[i]  = E_test_rank_array[i];
                 break;
         };
-        
 
 /*  Printout initial NPB info */
     if( my_rank == 0 )
@@ -1395,7 +1321,7 @@ int main( int argc, char **argv )
 
     lci::broadcast_x(&timeron, 1 * sizeof(int), 0).device(devices[0])();
 
-#ifdef  TIMING_ENABLED 
+#ifdef  TIMING_ENABLED
     #pragma omp parallel for schedule(static)
     for( i=1; i<=T_LAST; i++ ) timer_clear( i );
 #endif
@@ -1404,8 +1330,8 @@ int main( int argc, char **argv )
     alloc_space();
 
 /*  Generate random number sequence and subsequent keys on all procs */
-    create_seq( find_my_seed( my_rank, 
-                              comm_size, 
+    create_seq( find_my_seed( my_rank,
+                              comm_size,
                               4*(long)TOTAL_KEYS*MIN_PROCS,
                               314159265.00,      /* Random number gen seed */
                               1220703125.00 ),   /* Random number gen mult */
@@ -1417,27 +1343,26 @@ int main( int argc, char **argv )
     send_bucket_rcomp = lci::register_rcomp(send_bucket_handler);
     lci::barrier_x().device(devices[0])();
 
-/*  Do one interation for free (i.e., untimed) to guarantee initialization of  
+/*  Do one interation for free (i.e., untimed) to guarantee initialization of
     all data and code pages and respective tables */
-    rank( 1 );  
+    rank( 1 );
 
 /*  Start verification counter */
     passed_verification = 0;
 
     if( my_rank == 0 && CLASS != 'S' ) printf( "\n   iteration\n" );
 
-/*  Initialize timer  */             
+/*  Initialize timer  */
     timer_clear( 0 );
 
 /*  Initialize separate communication, computation timing */
-#ifdef  TIMING_ENABLED 
+#ifdef  TIMING_ENABLED
     #pragma omp parallel for schedule(static)
     for( i=1; i<=T_LAST; i++ ) timer_clear( i );
 #endif
 
-/*  Start timer  */             
+/*  Start timer  */
     timer_start( 0 );
-
 
 /*  This is the main iteration */
     for( iteration=1; iteration<=MAX_ITERATIONS; iteration++ )
@@ -1447,7 +1372,6 @@ int main( int argc, char **argv )
         rank( iteration );
     }
 
-
 /*  Stop timer, obtain time for processors */
     timer_stop( 0 );
 
@@ -1456,18 +1380,15 @@ int main( int argc, char **argv )
 /*  End of timing, obtain maximum time of all processors */
     lci::reduce_x(&timecounter, &maxtime, 1, sizeof(double), max_op, 0).device(devices[0])();
 
-
 /*  This tests that keys are in sequence: sorting of last ranked key seq
     occurs here, but is an untimed operation                             */
     full_verify();
-
 
 /*  Obtain verification counter sum */
     itemp = passed_verification;
     lci::reduce_x(&itemp, &passed_verification, 1, sizeof(int), sum_op_int, 0).device(devices[0])();
 
     free_space();
-
 
 /*  The final printout  */
     if( my_rank == 0 )
@@ -1485,7 +1406,7 @@ int main( int argc, char **argv )
                          maxtime,
                          ((double) (MAX_ITERATIONS)*TOTAL_KEYS*MIN_PROCS)
                                                       /maxtime/1000000.,
-                         "keys ranked", 
+                         "keys ranked",
                          passed_verification,
                          NPBVERSION,
                          COMPILETIME,
@@ -1496,14 +1417,13 @@ int main( int argc, char **argv )
                          CFLAGS,
                          CLINKFLAGS );
     }
-                    
 
 #ifdef  TIMING_ENABLED
     if (timeron)
     {
         double    t1[T_LAST+1], tmin[T_LAST+1], tsum[T_LAST+1], tmax[T_LAST+1];
         char      t_recs[T_LAST+1][9];
-    
+
         #pragma omp parallel for schedule(static)
         for( i=0; i<=T_LAST; i++ )
             t1[i] = timer_read( i );
@@ -1528,7 +1448,7 @@ int main( int argc, char **argv )
             for( i=0; i<=T_LAST; i++ )
             {
                 printf( " timer %2d (%-8s):  %10.4f  %10.4f  %10.4f\n",
-                        i+1, t_recs[i], tmin[i], tmax[i], 
+                        i+1, t_recs[i], tmin[i], tmax[i],
                         tsum[i]/((double) comm_size) );
             }
             printf( "\n" );
@@ -1539,7 +1459,6 @@ int main( int argc, char **argv )
     lci::free_comp(&send_bucket_handler);
     free_devices();
     lci::g_runtime_fina();
-
 
     return 0;
          /**************************/
