@@ -155,6 +155,8 @@ int msg_batch_size;
 int NUM_THREADS_PER_PROC;
 int NUM_DEVICES;
 int NUM_THREADS_PER_DEVICE;
+// Pre-allocated buffer for get_upacket_blocking when use_upacket is false
+void* preallocated_buffer = nullptr;
 
 /* Number of keys assigned to each processor
  * #define  NUM_KEYS            (TOTAL_KEYS/NUM_PROCS*MIN_PROCS)
@@ -206,7 +208,8 @@ int size_of_buffers;
 #define T_LAST   9
 #endif
 int timeron;
-
+int use_upacket;
+int use_loopback;
 
 /*************************************/
 /* Typedef: if necessary, change the */
@@ -351,7 +354,11 @@ void alloc_space(void)
    /* to ensure use of eager protocol. This value can be set using */
    /* env variable LCI_ATTR_PACKET_SIZE. */
    msg_batch_size = lci::get_max_bcopy_size() / sizeof(INT_TYPE) - 1;
-   if (my_rank == 0) fprintf(stderr, "msg_batch_size = %d\n", msg_batch_size);
+
+   /* Pre-allocate buffer for get_upacket_blocking when use_upacket is false */
+   if (!use_upacket && preallocated_buffer == nullptr) {
+       preallocated_buffer = malloc(msg_batch_size * sizeof(INT_TYPE) * comm_size * omp_get_max_threads());
+   }
 
    /* buffer size for communication */
    if ( comm_size < 256 )
@@ -369,7 +376,7 @@ void alloc_space(void)
    cumulative_key_buff_ptr = (KEY_TYPE *)malloc(sizeof(KEY_TYPE)*size_of_buffers);
 
    if (!key_array || !key_buff1 || !cumulative_key_buff_ptr) {
-      printf("ERROR: memoy allocation failed\n");
+      printf("ERROR: memory allocation failed\n");
       lci::g_runtime_fina();
       exit(1);
    }
@@ -543,8 +550,59 @@ double   find_my_seed( int  kn,       /* my processor rank, 0<=kn<=num procs */
 
 }
 
+/*****************************************************************/
+/*************   C  H  E  C  K  _  U  S  E  _  U  P  A  C  K  E  T  **/
+/*****************************************************************/
+int check_use_upacket_flag( void )
+{
+    int upacket_on = 1;  // default to enabled
+    char *ev = getenv("USE_UPACKET");
 
+    if (ev) {
+        if (*ev == '\0')
+            upacket_on = 1;
+        else if (*ev >= '1' && *ev <= '9')
+            upacket_on = 1;
+        else if (strcmp(ev, "on") == 0 || strcmp(ev, "ON") == 0 ||
+                 strcmp(ev, "yes") == 0 || strcmp(ev, "YES") == 0 ||
+                 strcmp(ev, "true") == 0 || strcmp(ev, "TRUE") == 0)
+            upacket_on = 1;
+        else if (strcmp(ev, "off") == 0 || strcmp(ev, "OFF") == 0 ||
+                 strcmp(ev, "no") == 0 || strcmp(ev, "NO") == 0 ||
+                 strcmp(ev, "false") == 0 || strcmp(ev, "FALSE") == 0 ||
+                 strcmp(ev, "0") == 0)
+            upacket_on = 0;
+    }
 
+    return upacket_on;
+}
+
+/*****************************************************************/
+/*************   C  H  E  C  K  _  L  O  O  P  B  A  C  K  **********/
+/*****************************************************************/
+int check_loopback_flag( void )
+{
+    int loopback_on = 1;  // default to enabled
+    char *ev = getenv("LOOPBACK");
+
+    if (ev) {
+        if (*ev == '\0')
+            loopback_on = 1;
+        else if (*ev >= '1' && *ev <= '9')
+            loopback_on = 1;
+        else if (strcmp(ev, "on") == 0 || strcmp(ev, "ON") == 0 ||
+                 strcmp(ev, "yes") == 0 || strcmp(ev, "YES") == 0 ||
+                 strcmp(ev, "true") == 0 || strcmp(ev, "TRUE") == 0)
+            loopback_on = 1;
+        else if (strcmp(ev, "off") == 0 || strcmp(ev, "OFF") == 0 ||
+                 strcmp(ev, "no") == 0 || strcmp(ev, "NO") == 0 ||
+                 strcmp(ev, "false") == 0 || strcmp(ev, "FALSE") == 0 ||
+                 strcmp(ev, "0") == 0)
+            loopback_on = 0;
+    }
+
+    return loopback_on;
+}
 
 /*****************************************************************/
 /*************      C  R  E  A  T  E  _  S  E  Q      ************/
@@ -711,20 +769,31 @@ void am_handler(lci::status_t status)
     TL_STEP_STOP(A2A_AM_COPY);
     TL_ADD_BYTES(A2A_AM_COPY, status.get_size());
 #endif
-    lci::put_upacket(status.get_buffer());
+    if (use_upacket) {
+        lci::put_upacket(status.get_buffer());
+    }
 }
 
 // /*****************************************************************/
 // /*************        CUSTOM AllToAllv            ****************/
 // /*****************************************************************/
 
-static inline void* get_upacket_blocking(lci::device_t device) {
-    void* upacket = lci::get_upacket();
-    while (upacket == nullptr) {
-        upacket = lci::get_upacket();
-        lci::progress_x().device(device)();
+static inline void* get_upacket_blocking(lci::device_t device, int dest_rank) {
+    if (use_upacket) {
+        void* upacket = lci::get_upacket();
+        while (upacket == nullptr) {
+            upacket = lci::get_upacket();
+            lci::progress_x().device(device)();
+        }
+        return upacket;
+    } else {
+        // Return pre-allocated buffer when upacket is disabled
+        // Each rank allocates its own buffer pool: comm_size * num_threads buffers
+        // Index: (thread_id * comm_size + dest_rank) * msg_batch_size
+        int thread_id = omp_get_thread_num();
+        int buffer_index = (thread_id * comm_size + dest_rank) * msg_batch_size;
+        return static_cast<void*>(static_cast<INT_TYPE*>(preallocated_buffer) + buffer_index);
     }
-    return upacket;
 }
 
 class SendBuffer {
@@ -741,9 +810,9 @@ class SendBuffer {
         size_ = 0;
     }
 
-    void push(INT_TYPE key, lci::device_t device) {
+    void push(INT_TYPE key, lci::device_t device, int dest_rank) {
         if (!buf_) {
-            buf_ = get_upacket_blocking(device);
+            buf_ = get_upacket_blocking(device, dest_rank);
             buf_int_ = static_cast<INT_TYPE*>(buf_);
         }
         buf_int_[size_++] = key;
@@ -767,12 +836,14 @@ void flush_send_buffer(std::vector<SendBuffer>& send_buffers, int dest_rank, lci
 #ifdef A2A_TL_TIMERS
     TL_STEP_START(A2A_FLUSH_SEND);
 #endif
-    if (dest_rank == my_rank) {
+    if (dest_rank == my_rank && use_loopback) {
 #ifdef A2A_TL_TIMERS
         TL_STEP_START(A2A_SELF_COPY);
 #endif
         handle_received_keys(send_buf.data(), send_buf.size());
-        lci::put_upacket(send_buf.data());
+        if (use_upacket) {
+            lci::put_upacket(send_buf.data());
+        }
 #ifdef A2A_TL_TIMERS
         TL_STEP_STOP(A2A_SELF_COPY);
         TL_ADD_BYTES(A2A_SELF_COPY, send_buf.size_in_bytes());
@@ -796,7 +867,7 @@ void flush_send_buffer(std::vector<SendBuffer>& send_buffers, int dest_rank, lci
 void send_key_to_processor(INT_TYPE key, int dest_rank, size_t typesize,
                            std::vector<SendBuffer>& send_buffers,
                            lci::device_t device) {
-    send_buffers[dest_rank].push(key, device);
+    send_buffers[dest_rank].push(key, device, dest_rank);
     if (send_buffers[dest_rank].size() >= msg_batch_size) {
         flush_send_buffer(send_buffers, dest_rank, device);
     }
@@ -835,18 +906,12 @@ void allocate_devices() {
     NUM_THREADS_PER_PROC = omp_get_max_threads();
     NUM_THREADS_PER_DEVICE = get_num_threads_per_device();
     NUM_DEVICES = (NUM_THREADS_PER_PROC / NUM_THREADS_PER_DEVICE);
-    fprintf(stderr, "Allocating %d devices on rank %d with %d threads\n", 
-            NUM_DEVICES, my_rank, NUM_THREADS_PER_PROC);
 
     size_t npackets = lci::get_default_packet_pool().get_attr_npackets();
     size_t max_nrecvs_per_device = std::min(npackets / 8 / NUM_DEVICES, 4096UL);
     size_t max_nsends_per_device = std::min(npackets / 4 / lci::get_rank_n() / NUM_DEVICES, 64UL);
     max_nsends_per_device = std::max(max_nsends_per_device, 4UL);
-    
-    char hostname[256];
-    gethostname(hostname, sizeof(hostname));
-    // fprintf(stderr, "Allocating %d devices on rank %d, max_nsends_per_device = %zu, max_nrecvs_per_device = %zu (hostname: %s)\n", 
-    //         NUM_DEVICES, my_rank, max_nsends_per_device, max_nrecvs_per_device, hostname);
+
     for (int i = 0; i < NUM_DEVICES; ++i) {
         devices.push_back(lci::alloc_device_x().net_max_sends(max_nsends_per_device).net_max_recvs(max_nrecvs_per_device)());
     }
@@ -1315,10 +1380,22 @@ int main( int argc, char **argv )
         if ( comm_size != np_total )
             printf( " WARNING: Number of processes"
                     " is not a power of two (%d active)\n", comm_size );
-
+        use_upacket = check_use_upacket_flag();
+        use_loopback = check_loopback_flag();
         timeron = check_timer_flag();
+
+        if (use_upacket)
+            printf( " Using upacket for buffer management\n" );
+        else
+            printf( " Using malloc/free for buffer management\n" );
+        if (use_loopback)
+            printf( " Loopback optimization: ENABLED\n" );
+        else
+            printf( " Loopback optimization: DISABLED\n" );
     }
 
+    lci::broadcast_x(&use_upacket, 1 * sizeof(int), 0).device(devices[0])();
+    lci::broadcast_x(&use_loopback, 1 * sizeof(int), 0).device(devices[0])();
     lci::broadcast_x(&timeron, 1 * sizeof(int), 0).device(devices[0])();
 
 #ifdef  TIMING_ENABLED
@@ -1339,7 +1416,7 @@ int main( int argc, char **argv )
 
 /*  Initialize LCI active message properties */
     send_counter = lci::alloc_counter();
-    send_bucket_handler = lci::alloc_handler_x(am_handler).zero_copy_am(true)();
+    send_bucket_handler = lci::alloc_handler_x(am_handler).zero_copy_am(use_upacket == 1)();
     send_bucket_rcomp = lci::register_rcomp(send_bucket_handler);
     lci::barrier_x().device(devices[0])();
 
@@ -1393,7 +1470,9 @@ int main( int argc, char **argv )
 /*  The final printout  */
     if( my_rank == 0 )
     {
-        if( passed_verification != 5*MAX_ITERATIONS + comm_size )
+        /* Partial verification (5 tests/iteration) + full verification (per rank) */
+        int expected_verification = 5*MAX_ITERATIONS + comm_size;
+        if( passed_verification != expected_verification )
             passed_verification = 0;
         c_print_results( "IS",
                          CLASS,
@@ -1457,6 +1536,11 @@ int main( int argc, char **argv )
 #endif
 
     lci::free_comp(&send_bucket_handler);
+    // Free pre-allocated buffer
+    if (preallocated_buffer != nullptr) {
+        free(preallocated_buffer);
+        preallocated_buffer = nullptr;
+    }
     free_devices();
     lci::g_runtime_fina();
 
