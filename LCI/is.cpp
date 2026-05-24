@@ -34,6 +34,29 @@
  *                                                                       *
  *************************************************************************/
 
+/*************************************************************************
+ *  LCI + OpenMP variant of NPB IS -- Multithreaded Fine-grained
+ *  Asynchronous BSP (FA-BSP).
+ *
+ *  Each rank is one process with multiple OpenMP threads, communicating
+ *  through LCI. The workflow is:
+ *
+ *    Step 1  create_seq()  Generate Gaussian-distributed keys.
+ *    Step 2  rank()        Bin keys into buckets; reduce to global bucket
+ *                          sizes.
+ *    Step 3  rank()        Greedily assign buckets to processes
+ *                          (coarse load balancing).
+ *    Step 4  rank()        Redistribute keys with fine-grained active
+ *                          messages instead of MPI_Alltoallv: each thread
+ *                          batches keys into per-destination send buffers,
+ *                          flushes them when full, and concurrently
+ *                          progresses LCI to receive and tally keys.
+ *    Step 5  rank()        Parallel prefix sum over the key-frequency
+ *                          array to obtain the final key ranks.
+ *
+ *  Step 1 runs once; Steps 2-5 run every timed iteration in rank().
+ *************************************************************************/
+
 #include "a2a_tl_timers.hpp"
 
 #include <lci.hpp>
@@ -148,9 +171,9 @@
 #define  TEST_ARRAY_SIZE     5
 
 /*****************************************************************/
-/* DEFINED BY USER: MESSAGE BATCH SIZE FOR ALLTOALLV             */
+/* Number of keys batched into one active message (Step 4).      */
+/* Capped to the eager-protocol limit; set in alloc_space().     */
 /*****************************************************************/
-// #define  MSG_BATCH_SIZE      (TOTAL_KEYS / (NUM_PROCS * 4))
 int msg_batch_size;
 int NUM_THREADS_PER_PROC;
 int NUM_DEVICES;
@@ -608,6 +631,11 @@ int check_loopback_flag( void )
 /*************      C  R  E  A  T  E  _  S  E  Q      ************/
 /*****************************************************************/
 
+/*
+ * Step 1: generate this rank's keys with the NPB randlc() generator. Each
+ * key is the sum of four uniform random values, giving a Gaussian-like
+ * distribution over [0, MAX_KEY).
+ */
 void	create_seq( double seed, double a )
 {
 	double x;
@@ -745,13 +773,21 @@ void min_op(const void* left, const void* right, void* dst, size_t n)
 // /*************      ACTIVE MESSAGE HANDLER        ****************/
 // /*****************************************************************/
 
+/* Keys this process has received and tallied so far this iteration; the     */
+/* Step 4 redistribution loop spins on it to know when all expected keys     */
+/* have arrived. Cache-line padded to avoid false sharing.                   */
 alignas(64) std::atomic<size_t> global_recv_count{0};
 char padding[64 - sizeof(global_recv_count)];
 
 const size_t KEY_SIZE = sizeof(INT_TYPE);
 
+/*
+ * Tally a batch of received keys into the key-frequency array (key_buff_ptr):
+ * the slot for value v counts how many keys equal v. This frequency array is
+ * what Step 5 prefix-sums into ranks. Runs on every thread, so increments
+ * are atomic.
+ */
 void handle_received_keys(const void* src, size_t num_of_keys) {
-    // count in columns: for each key, key_buff_ptr[key]++
     const INT_TYPE* keys = static_cast<const INT_TYPE*>(src);
     for (size_t i = 0; i < num_of_keys; ++i) {
         key_buff_ptr[keys[i]].fetch_add(1, std::memory_order_relaxed);
@@ -759,6 +795,9 @@ void handle_received_keys(const void* src, size_t num_of_keys) {
     global_recv_count.fetch_add(num_of_keys, std::memory_order_relaxed);
 }
 
+/* LCI active-message handler: invoked on the receiver when a batch of keys   */
+/* arrives, tallies them into the key-frequency array, and recycles the      */
+/* packet when zero-copy upackets are in use.                                */
 void am_handler(lci::status_t status)
 {
 #ifdef A2A_TL_TIMERS
@@ -773,10 +812,6 @@ void am_handler(lci::status_t status)
         lci::put_upacket(status.get_buffer());
     }
 }
-
-// /*****************************************************************/
-// /*************        CUSTOM AllToAllv            ****************/
-// /*****************************************************************/
 
 static inline void* get_upacket_blocking(lci::device_t device, int dest_rank) {
     if (use_upacket) {
@@ -796,6 +831,12 @@ static inline void* get_upacket_blocking(lci::device_t device, int dest_rank) {
     }
 }
 
+/*
+ * Per-destination send buffer (Step 4): a thread appends keys bound for one
+ * destination process and flushes the whole buffer as a single active message
+ * once it fills (msg_batch_size keys). Backed by either an LCI zero-copy
+ * packet ("upacket") or a slot in preallocated_buffer.
+ */
 class SendBuffer {
   public:
     SendBuffer() = default;
@@ -829,6 +870,9 @@ class SendBuffer {
     int size_ = 0;
 };
 
+/* Flush one destination's batched keys as an active message, retrying until  */
+/* LCI accepts it. Loopback optimization: if the destination is this same     */
+/* process, invoke the handler directly instead of messaging ourselves.       */
 void flush_send_buffer(std::vector<SendBuffer>& send_buffers, int dest_rank, lci::device_t device) {
     SendBuffer& send_buf = send_buffers[dest_rank];
     if (send_buf.empty()) return;
@@ -836,6 +880,7 @@ void flush_send_buffer(std::vector<SendBuffer>& send_buffers, int dest_rank, lci
 #ifdef A2A_TL_TIMERS
     TL_STEP_START(A2A_FLUSH_SEND);
 #endif
+    /* Loopback optimization: destination is the local process. */
     if (dest_rank == my_rank && use_loopback) {
 #ifdef A2A_TL_TIMERS
         TL_STEP_START(A2A_SELF_COPY);
@@ -864,7 +909,9 @@ void flush_send_buffer(std::vector<SendBuffer>& send_buffers, int dest_rank, lci
     send_buf.release();
 }
 
-void send_key_to_processor(INT_TYPE key, int dest_rank, size_t typesize,
+/* Route one key to its destination's send buffer, flushing that buffer as an */
+/* active message once it reaches msg_batch_size keys.                        */
+void send_key_to_processor(INT_TYPE key, int dest_rank,
                            std::vector<SendBuffer>& send_buffers,
                            lci::device_t device) {
     send_buffers[dest_rank].push(key, device, dest_rank);
@@ -932,6 +979,12 @@ void free_devices() {
 // /*************             R  A  N  K             ****************/
 // /*****************************************************************/
 
+/*
+ * One timed iteration of the sorting. Workflow:
+ * bin keys into buckets (Step 2), greedily assign buckets to processes
+ * (Step 3), redistribute keys via active messages (Step 4), then prefix-sum
+ * the resulting key-frequency array into ranks (Step 5).
+ */
 void rank( int iteration )
 {
     INT_TYPE    i, k;
@@ -976,7 +1029,9 @@ void rank( int iteration )
 
     TIMER_START( T_RANK_1_1 );
 
-/*  Determine the number of keys in each bucket */
+/*  Step 2: organize keys into buckets -- count keys per local bucket    */
+/*  (threads build private histograms, then merge; the global reduce     */
+/*  below completes Step 2).                                             */
     #pragma omp parallel
     {
         int bucket_size_private[NUM_BUCKETS] = {0};
@@ -1008,10 +1063,11 @@ void rank( int iteration )
     TIMER_START( T_RANK );
     TIMER_START( T_RANK_2 );
 
-/*  Determine Redistibution of keys: accumulate the bucket size totals
-    till this number surpasses NUM_KEYS (which the average number of keys
+/*  Step 3: greedily assign buckets to processes (coarse load balancing).
+    Accumulate the bucket size totals until the running total surpasses
+    NUM_KEYS (which is the average number of keys
     per processor).  Then all keys in these buckets go to processor 0.
-    Continue accumulating again until supassing 2*NUM_KEYS. All keys
+    Continue accumulating again until surpassing 2*NUM_KEYS. All keys
     in these buckets go to processor 1, etc.  This algorithm guarantees
     that all processors have work ranking; no processors are left idle.
     The optimum number of buckets, however, does not result in as high
@@ -1106,7 +1162,11 @@ void rank( int iteration )
     a2atl::init(omp_get_max_threads());
 #endif
 
-/*  send keys to corresponding processor based on the bucket it belongs to */
+/*  Step 4: redistribute keys with fine-grained active messages. Each thread
+    routes each of its keys to the process that owns the key's bucket, batching
+    into per-destination send buffers and flushing them as active messages,
+    then progresses LCI until this process has received all expected keys
+    (tallied by handle_received_keys).                                         */
     #pragma omp parallel
     {
         int thread_id = omp_get_thread_num();
@@ -1116,13 +1176,15 @@ void rank( int iteration )
         #pragma omp for nowait
         for (i=0; i<num_keys; i++) {
             auto dest_rank = bucket_i_to_process_ranks[key_array[i] >> shift];
-            send_key_to_processor(key_array[i], dest_rank, KEY_SIZE, send_buffers, device);
+            send_key_to_processor(key_array[i], dest_rank, send_buffers, device);
         }
         flush_all_send_buffers(send_buffers, device);
 
     #ifdef A2A_TL_TIMERS
         TL_STEP_START(A2A_PROGRESS_WAIT);
     #endif
+        /* Pick up incoming active messages until every expected key has  */
+        /* arrived and been tallied into the key-frequency array.         */
         while (global_recv_count.load() < expected_recv_count) {
             lci::progress_x().device(device)();
         }
@@ -1146,13 +1208,15 @@ void rank( int iteration )
     TIMER_START( T_RANK );
     TIMER_START( T_RANK_3 );
 
-/*  To obtain ranks of each key, successively add the individual key
-    population, not forgetting the total of lesser keys, m.
+/*  Step 5: compute final key ranks by prefix-summing the key-frequency
+    array. Successively add each key population, not forgetting the total of
+    lesser keys, m.
     NOTE: Since the total of lesser keys would be subtracted later
     in verification, it is no longer added to the first key population
     here, but still needed during the partial verify test.  This is to
-    ensure that 32-bit key_buff can still be used for class D.           */
-/*    PREFIX SUM    */
+    ensure that 32-bit key_buff can still be used for class D.
+    The scan is parallel: per-thread partial sums, an exclusive scan of
+    those into offsets, then each thread scans its chunk from its offset.  */
     KEY_TYPE* cumulative = cumulative_key_buff_ptr - min_key_val;
     const INT_TYPE start_key = min_key_val;
     const INT_TYPE N = max_key_val - min_key_val + 1;
