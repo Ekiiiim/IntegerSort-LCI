@@ -49,6 +49,7 @@ foreach(CLASS ${NPB_CLASSES})
     is.cpp
     key_generation.cpp
     bucket_plan.cpp
+    ranking.cpp
     a2a_tl_timers.cpp)
 
   # Include directories

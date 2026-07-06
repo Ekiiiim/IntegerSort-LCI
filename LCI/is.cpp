@@ -61,6 +61,7 @@
 #include "bucket_plan.hpp"
 #include "is_config.hpp"
 #include "key_generation.hpp"
+#include "ranking.hpp"
 
 #include <lci.hpp>
 #include <stdlib.h>
@@ -914,53 +915,10 @@ void rank( int iteration )
     The scan is parallel: per-thread partial sums, an exclusive scan of
     those into offsets, then each thread scans its chunk from its offset.  */
     KEY_TYPE* cumulative = cumulative_key_buff_ptr - min_key_val;
-    const INT_TYPE start_key = min_key_val;
-    const INT_TYPE N = max_key_val - min_key_val + 1;
-
-    std::vector<KEY_TYPE> partial_sums;
-
-    #pragma omp parallel
-    {
-        int nthreads = omp_get_num_threads();
-        int tid = omp_get_thread_num();
-
-        #pragma omp single
-        {
-            partial_sums.resize(nthreads);
-        }
-
-        // Each thread calculates the sum of its local chunk
-        KEY_TYPE local_sum = 0;
-        #pragma omp for schedule(static) nowait
-        for (INT_TYPE i = 0; i < N; i++) {
-            local_sum += key_buff_ptr[start_key + i].load(std::memory_order_relaxed);
-        }
-        partial_sums[tid] = local_sum;
-
-        #pragma omp barrier
-
-        // One thread computes the exclusive prefix sum of the partial sums.
-        // This gives each thread its starting offset.
-        #pragma omp single
-        {
-            KEY_TYPE temp_sum = 0;
-            for (int i = 0; i < nthreads; i++) {
-                KEY_TYPE val = partial_sums[i];
-                partial_sums[i] = temp_sum; // partial_sums[tid] now holds the offset
-                temp_sum += val;
-            }
-        }
-        // Barrier is implicit after 'single'
-
-        // Each thread performs a sequential scan on its local chunk,
-        // starting from the offset computed in the sequential pass.
-        KEY_TYPE offset = partial_sums[tid];
-        #pragma omp for schedule(static)
-        for (INT_TYPE i = 0; i < N; i++) {
-            offset += key_buff_ptr[start_key + i].load(std::memory_order_relaxed);
-            cumulative[start_key + i] = offset;
-        }
-    }
+    is_lci::compute_local_ranks(key_buff_ptr,
+                                cumulative,
+                                min_key_val,
+                                max_key_val);
 
 /* This is the partial verify test section */
 /* Observe that test_rank_array vals are   */
