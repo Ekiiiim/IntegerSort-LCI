@@ -48,6 +48,7 @@ foreach(CLASS ${NPB_CLASSES})
   add_executable(${TARGET_NAME}
     is.cpp
     key_generation.cpp
+    bucket_plan.cpp
     a2a_tl_timers.cpp)
 
   # Include directories

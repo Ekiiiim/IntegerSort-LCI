@@ -58,6 +58,7 @@
  *************************************************************************/
 
 #include "a2a_tl_timers.hpp"
+#include "bucket_plan.hpp"
 #include "is_config.hpp"
 #include "key_generation.hpp"
 
@@ -738,12 +739,11 @@ void free_devices() {
  */
 void rank( int iteration )
 {
-    INT_TYPE    i, k;
+    INT_TYPE    i;
 
     INT_TYPE    shift = MAX_KEY_LOG_2 - NUM_BUCKETS_LOG_2;
     INT_TYPE    key;
-    KEY_TYPE    bucket_sum_accumulator, j, m;
-    INT_TYPE    local_bucket_sum_accumulator;
+    KEY_TYPE    j, m;
     INT_TYPE    expected_recv_count;
     INT_TYPE    min_key_val, max_key_val;
 
@@ -783,20 +783,8 @@ void rank( int iteration )
 /*  Step 2: organize keys into buckets -- count keys per local bucket    */
 /*  (threads build private histograms, then merge; the global reduce     */
 /*  below completes Step 2).                                             */
-    #pragma omp parallel
-    {
-        int bucket_size_private[NUM_BUCKETS] = {0};
-        #pragma omp for nowait
-        for( i=0; i<num_keys; i++ ) {
-            bucket_size_private[key_array[i] >> shift]++;
-        }
-        #pragma omp critical
-        {
-            for (int b = 0; b < NUM_BUCKETS; ++b) {
-                bucket_size[b] += bucket_size_private[b];
-            }
-        }
-    }
+    is_lci::count_local_buckets(
+        key_array, num_keys, shift, bucket_size, NUM_BUCKETS);
 
     TIMER_STOP( T_RANK_1_1 );
     TIMER_STOP( T_RANK_1 );
@@ -830,50 +818,23 @@ void rank( int iteration )
     number of first and last bucket which each processor will have after
     the redistribution is done.                                          */
 
-    bucket_sum_accumulator = 0;
-    local_bucket_sum_accumulator = 0;
-    process_bucket_distrib_ptr1[0] = 0;
-    expected_recv_count = 0;
-    INT_TYPE previous_bucket_sum_accumulator = 0;
+    is_lci::BucketPlan bucket_plan = is_lci::build_bucket_plan(
+        bucket_size,
+        bucket_size_totals,
+        bucket_i_to_process_ranks,
+        process_bucket_distrib_ptr1,
+        process_bucket_distrib_ptr2,
+        comm_size,
+        my_rank,
+        NUM_BUCKETS,
+        shift,
+        num_keys);
 
-    for( i=0, j=0; i<NUM_BUCKETS; i++ )
-    {
-        bucket_sum_accumulator       += bucket_size_totals[i];
-        local_bucket_sum_accumulator += bucket_size[i];
-
-        bucket_i_to_process_ranks[i] = j;  // map bucket index to processor rank
-
-        if( bucket_sum_accumulator >= (j+1)*num_keys )
-        {
-            if ( j == my_rank ) {
-                expected_recv_count = bucket_sum_accumulator - previous_bucket_sum_accumulator;
-            }
-            if( j != 0 )
-            {
-                process_bucket_distrib_ptr1[j] =
-                                        process_bucket_distrib_ptr2[j-1]+1;
-            }
-            process_bucket_distrib_ptr2[j++] = i;
-            local_bucket_sum_accumulator = 0;
-            previous_bucket_sum_accumulator = bucket_sum_accumulator;
-        }
-    }
-
-/*  When NUM_PROCS approaching NUM_BUCKETS, it is highly possible
-    that the last few processors don't get any buckets.  So, we
-    need to set counts properly in this case to avoid any fallouts.    */
-    while( j < comm_size )
-    {
-        process_bucket_distrib_ptr1[j] = 1;
-        j++;
-    }
-
-/*  The starting and ending bucket numbers on each processor are
-    multiplied by the interval size of the buckets to obtain the
-    smallest possible min and greatest possible max value of any
-    key on each processor                                          */
-    min_key_val = process_bucket_distrib_ptr1[my_rank] << shift;
-    max_key_val = ((process_bucket_distrib_ptr2[my_rank] + 1) << shift)-1;
+    expected_recv_count = bucket_plan.expected_recv_count;
+    min_key_val = bucket_plan.min_key_value;
+    max_key_val = bucket_plan.max_key_value;
+    m = bucket_plan.lesser_key_count;
+    j = bucket_plan.local_key_count;
 
 /*  Clear the work array */
     #pragma omp parallel for schedule(static)
@@ -881,22 +842,6 @@ void rank( int iteration )
         key_buff1[i].store(0, std::memory_order_relaxed);
         cumulative_key_buff_ptr[i] = 0;
     }
-
-/*  Determine the total number of keys on all other
-    processors holding keys of lesser value         */
-    m = 0;
-    for( k=0; k<my_rank; k++ )
-        for( i= process_bucket_distrib_ptr1[k];
-             i<=process_bucket_distrib_ptr2[k];
-             i++ )
-            m += bucket_size_totals[i]; /*  m has total # of lesser keys */
-
-/*  Determine total number of keys on this processor */
-    j = 0;
-    for( i= process_bucket_distrib_ptr1[my_rank];
-         i<=process_bucket_distrib_ptr2[my_rank];
-         i++ )
-        j += bucket_size_totals[i];     /* j has total # of local keys   */
 
 /*  Ranking of all keys occurs in this section:                 */
 /*  shift it backwards so no subtractions are necessary in loop */
