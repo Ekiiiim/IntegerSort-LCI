@@ -120,7 +120,8 @@ struct ProblemConfig {
   int iterations;
 };
 
-// Paper Step 1 setup: expose the NAS problem configuration selected by CLASS.
+// ProblemConfig is the benchmark/problem configuration interface used before
+// paper Step 1 key generation.
 inline ProblemConfig problem_config() {
   return ProblemConfig{
       CLASS,

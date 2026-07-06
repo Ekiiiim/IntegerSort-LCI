@@ -41,7 +41,7 @@
  *  Each rank is one process with multiple OpenMP threads, communicating
  *  through LCI. The workflow is:
  *
- *    Step 1  create_seq()  Generate Gaussian-distributed keys.
+ *    Step 1  is_lci::generate_keys()  Generate Gaussian-distributed keys.
  *    Step 2  rank()        Bin keys into buckets; reduce to global bucket
  *                          sizes.
  *    Step 3  rank()        Greedily assign buckets to processes
