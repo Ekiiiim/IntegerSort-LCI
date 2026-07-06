@@ -10,12 +10,14 @@
 
 namespace is_lci {
 
+// Paper Step 4 interface: runtime options for the LCI active-message redistributor.
 struct RedistributorOptions {
   bool use_upacket;
   bool use_loopback;
   int message_batch_size;
 };
 
+// Paper Step 4 interface: runtime state for the LCI active-message redistributor.
 struct RedistributorRuntime {
   lci::comp_t handler = nullptr;
   lci::rcomp_t rcomp = nullptr;
