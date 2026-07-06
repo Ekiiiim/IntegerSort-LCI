@@ -61,6 +61,7 @@
 #include "bucket_plan.hpp"
 #include "is_config.hpp"
 #include "key_generation.hpp"
+#include "lci_redistributor.hpp"
 #include "ranking.hpp"
 
 #include <lci.hpp>
@@ -79,8 +80,6 @@ int msg_batch_size;
 int NUM_THREADS_PER_PROC;
 int NUM_DEVICES;
 int NUM_THREADS_PER_DEVICE;
-// Pre-allocated buffer for get_upacket_blocking when use_upacket is false
-void* preallocated_buffer = nullptr;
 
 /* Number of keys assigned to each processor
  * #define  NUM_KEYS            (TOTAL_KEYS/NUM_PROCS*MIN_PROCS)
@@ -158,9 +157,7 @@ int      my_rank, np_total,
 /********************/
 /* LCI properties:  */
 /********************/
-lci::comp_t send_bucket_handler;
-lci::rcomp_t send_bucket_rcomp;
-lci::comp_t send_counter;
+is_lci::RedistributorRuntime redistributor_runtime;
 std::vector<lci::device_t> devices;
 
 /********************/
@@ -273,11 +270,6 @@ void alloc_space(void)
    /* to ensure use of eager protocol. This value can be set using */
    /* env variable LCI_ATTR_PACKET_SIZE. */
    msg_batch_size = lci::get_max_bcopy_size() / sizeof(INT_TYPE) - 1;
-
-   /* Pre-allocate buffer for get_upacket_blocking when use_upacket is false */
-   if (!use_upacket && preallocated_buffer == nullptr) {
-       preallocated_buffer = malloc(msg_batch_size * sizeof(INT_TYPE) * comm_size * omp_get_max_threads());
-   }
 
    /* buffer size for communication */
    if ( comm_size < 256 )
@@ -523,166 +515,6 @@ void min_op(const void* left, const void* right, void* dst, size_t n)
 }
 
 // /*****************************************************************/
-// /*************      ACTIVE MESSAGE HANDLER        ****************/
-// /*****************************************************************/
-
-/* Keys this process has received and tallied so far this iteration; the     */
-/* Step 4 redistribution loop spins on it to know when all expected keys     */
-/* have arrived. Cache-line padded to avoid false sharing.                   */
-alignas(64) std::atomic<size_t> global_recv_count{0};
-char padding[64 - sizeof(global_recv_count)];
-
-const size_t KEY_SIZE = sizeof(INT_TYPE);
-
-/*
- * Tally a batch of received keys into the key-frequency array (key_buff_ptr):
- * the slot for value v counts how many keys equal v. This frequency array is
- * what Step 5 prefix-sums into ranks. Runs on every thread, so increments
- * are atomic.
- */
-void handle_received_keys(const void* src, size_t num_of_keys) {
-    const INT_TYPE* keys = static_cast<const INT_TYPE*>(src);
-    for (size_t i = 0; i < num_of_keys; ++i) {
-        key_buff_ptr[keys[i]].fetch_add(1, std::memory_order_relaxed);
-    }
-    global_recv_count.fetch_add(num_of_keys, std::memory_order_relaxed);
-}
-
-/* LCI active-message handler: invoked on the receiver when a batch of keys   */
-/* arrives, tallies them into the key-frequency array, and recycles the      */
-/* packet when zero-copy upackets are in use.                                */
-void am_handler(lci::status_t status)
-{
-#ifdef A2A_TL_TIMERS
-    TL_STEP_START(A2A_AM_COPY);
-#endif
-    handle_received_keys(status.get_buffer(), status.get_size() / KEY_SIZE);
-#ifdef A2A_TL_TIMERS
-    TL_STEP_STOP(A2A_AM_COPY);
-    TL_ADD_BYTES(A2A_AM_COPY, status.get_size());
-#endif
-    if (use_upacket) {
-        lci::put_upacket(status.get_buffer());
-    }
-}
-
-static inline void* get_upacket_blocking(lci::device_t device, int dest_rank) {
-    if (use_upacket) {
-        void* upacket = lci::get_upacket();
-        while (upacket == nullptr) {
-            upacket = lci::get_upacket();
-            lci::progress_x().device(device)();
-        }
-        return upacket;
-    } else {
-        // Return pre-allocated buffer when upacket is disabled
-        // Each rank allocates its own buffer pool: comm_size * num_threads buffers
-        // Index: (thread_id * comm_size + dest_rank) * msg_batch_size
-        int thread_id = omp_get_thread_num();
-        int buffer_index = (thread_id * comm_size + dest_rank) * msg_batch_size;
-        return static_cast<void*>(static_cast<INT_TYPE*>(preallocated_buffer) + buffer_index);
-    }
-}
-
-/*
- * Per-destination send buffer (Step 4): a thread appends keys bound for one
- * destination process and flushes the whole buffer as a single active message
- * once it fills (msg_batch_size keys). Backed by either an LCI zero-copy
- * packet ("upacket") or a slot in preallocated_buffer.
- */
-class SendBuffer {
-  public:
-    SendBuffer() = default;
-
-    ~SendBuffer() {
-        release();
-    }
-
-    void release() {
-        buf_ = nullptr;
-        buf_int_ = nullptr;
-        size_ = 0;
-    }
-
-    void push(INT_TYPE key, lci::device_t device, int dest_rank) {
-        if (!buf_) {
-            buf_ = get_upacket_blocking(device, dest_rank);
-            buf_int_ = static_cast<INT_TYPE*>(buf_);
-        }
-        buf_int_[size_++] = key;
-    }
-
-    void* data() const { return buf_; }
-    size_t size() const { return static_cast<size_t>(size_); }
-    size_t size_in_bytes() const { return static_cast<size_t>(size_) * KEY_SIZE; }
-    bool empty() const { return size_ == 0; }
-
-  private:
-    void* buf_ = nullptr;
-    INT_TYPE* buf_int_ = nullptr;
-    int size_ = 0;
-};
-
-/* Flush one destination's batched keys as an active message, retrying until  */
-/* LCI accepts it. Loopback optimization: if the destination is this same     */
-/* process, invoke the handler directly instead of messaging ourselves.       */
-void flush_send_buffer(std::vector<SendBuffer>& send_buffers, int dest_rank, lci::device_t device) {
-    SendBuffer& send_buf = send_buffers[dest_rank];
-    if (send_buf.empty()) return;
-
-#ifdef A2A_TL_TIMERS
-    TL_STEP_START(A2A_FLUSH_SEND);
-#endif
-    /* Loopback optimization: destination is the local process. */
-    if (dest_rank == my_rank && use_loopback) {
-#ifdef A2A_TL_TIMERS
-        TL_STEP_START(A2A_SELF_COPY);
-#endif
-        handle_received_keys(send_buf.data(), send_buf.size());
-        if (use_upacket) {
-            lci::put_upacket(send_buf.data());
-        }
-#ifdef A2A_TL_TIMERS
-        TL_STEP_STOP(A2A_SELF_COPY);
-        TL_ADD_BYTES(A2A_SELF_COPY, send_buf.size_in_bytes());
-#endif
-    } else {
-        lci::status_t status;
-        do {
-            status = lci::post_am_x(dest_rank, send_buf.data(), send_buf.size_in_bytes(), send_counter, send_bucket_rcomp)
-                        .comp_semantic(lci::comp_semantic_t::network)
-                        .device(device)();
-            lci::progress_x().device(device)();
-        } while (status.is_retry());
-    }
-#ifdef A2A_TL_TIMERS
-    TL_STEP_STOP(A2A_FLUSH_SEND);
-    TL_ADD_BYTES(A2A_FLUSH_SEND, send_buf.size_in_bytes());
-#endif
-    send_buf.release();
-}
-
-/* Route one key to its destination's send buffer, flushing that buffer as an */
-/* active message once it reaches msg_batch_size keys.                        */
-void send_key_to_processor(INT_TYPE key, int dest_rank,
-                           std::vector<SendBuffer>& send_buffers,
-                           lci::device_t device) {
-    send_buffers[dest_rank].push(key, device, dest_rank);
-    if (send_buffers[dest_rank].size() >= msg_batch_size) {
-        flush_send_buffer(send_buffers, dest_rank, device);
-    }
-}
-
-void flush_all_send_buffers(std::vector<SendBuffer>& send_buffers, lci::device_t device) {
-    for (int i = 0; i < comm_size; ++i) {
-        auto index = (my_rank + i) % comm_size; // start from self rank
-        if (!send_buffers[index].empty()) {
-            flush_send_buffer(send_buffers, index, device);
-        }
-    }
-}
-
-// /*****************************************************************/
 // /*************        ALLOCATE DEVICES            ****************/
 // /*****************************************************************/
 int get_num_threads_per_device() {
@@ -769,9 +601,6 @@ void rank( int iteration )
         bucket_i_to_process_ranks[i] = 0;
     }
 
-    global_recv_count.store(0);
-    lci::counter_set(send_counter, 0);
-
 /*  Determine where the partial verify test keys are, load into  */
 /*  top of array bucket_size                                     */
     for( i=0; i<TEST_ARRAY_SIZE; i++ )
@@ -847,6 +676,7 @@ void rank( int iteration )
 /*  Ranking of all keys occurs in this section:                 */
 /*  shift it backwards so no subtractions are necessary in loop */
     key_buff_ptr = key_buff1 - min_key_val;
+    is_lci::reset_redistributor_iteration(&redistributor_runtime, key_buff_ptr);
 
     lci::barrier_x().device(devices[0])();
 
@@ -863,33 +693,22 @@ void rank( int iteration )
     routes each of its keys to the process that owns the key's bucket, batching
     into per-destination send buffers and flushing them as active messages,
     then progresses LCI until this process has received all expected keys
-    (tallied by handle_received_keys).                                         */
-    #pragma omp parallel
-    {
-        int thread_id = omp_get_thread_num();
-        std::vector<SendBuffer> send_buffers(comm_size);
-        lci::device_t device = get_device_for_thread(thread_id);
-
-        #pragma omp for nowait
-        for (i=0; i<num_keys; i++) {
-            auto dest_rank = bucket_i_to_process_ranks[key_array[i] >> shift];
-            send_key_to_processor(key_array[i], dest_rank, send_buffers, device);
-        }
-        flush_all_send_buffers(send_buffers, device);
-
-    #ifdef A2A_TL_TIMERS
-        TL_STEP_START(A2A_PROGRESS_WAIT);
-    #endif
-        /* Pick up incoming active messages until every expected key has  */
-        /* arrived and been tallied into the key-frequency array.         */
-        while (global_recv_count.load() < expected_recv_count) {
-            lci::progress_x().device(device)();
-        }
-    #ifdef A2A_TL_TIMERS
-        TL_STEP_STOP(A2A_PROGRESS_WAIT);
-        a2atl::publish_thread_stats(thread_id);
-    #endif
-    }
+    (tallied into the local frequency histogram by the redistributor).         */
+    is_lci::RedistributorOptions redistributor_options{
+        use_upacket == 1,
+        use_loopback == 1,
+        msg_batch_size,
+    };
+    is_lci::redistribute_keys(key_array,
+                              num_keys,
+                              bucket_i_to_process_ranks,
+                              shift,
+                              expected_recv_count,
+                              comm_size,
+                              my_rank,
+                              devices,
+                              redistributor_options,
+                              &redistributor_runtime);
 
     TIMER_STOP( T_ALLTOALL );
     TIMER_STOP( T_RCOMM );
@@ -1167,6 +986,16 @@ int main( int argc, char **argv )
 /*  allocate space for work arrays */
     alloc_space();
 
+    is_lci::RedistributorOptions redistributor_options{
+        use_upacket == 1,
+        use_loopback == 1,
+        msg_batch_size,
+    };
+    is_lci::allocate_fallback_buffers(&redistributor_runtime,
+                                      comm_size,
+                                      omp_get_max_threads(),
+                                      redistributor_options);
+
 /*  Generate random number sequence and subsequent keys on all procs */
     is_lci::generate_keys(
         key_array,
@@ -1180,9 +1009,8 @@ int main( int argc, char **argv )
         1220703125.00);
 
 /*  Initialize LCI active message properties */
-    send_counter = lci::alloc_counter();
-    send_bucket_handler = lci::alloc_handler_x(am_handler).zero_copy_am(use_upacket == 1)();
-    send_bucket_rcomp = lci::register_rcomp(send_bucket_handler);
+    is_lci::initialize_redistributor(&redistributor_runtime,
+                                     redistributor_options);
     lci::barrier_x().device(devices[0])();
 
 /*  Do one interation for free (i.e., untimed) to guarantee initialization of
@@ -1300,12 +1128,7 @@ int main( int argc, char **argv )
     }
 #endif
 
-    lci::free_comp(&send_bucket_handler);
-    // Free pre-allocated buffer
-    if (preallocated_buffer != nullptr) {
-        free(preallocated_buffer);
-        preallocated_buffer = nullptr;
-    }
+    is_lci::finalize_redistributor(&redistributor_runtime);
     free_devices();
     lci::g_runtime_fina();
 
