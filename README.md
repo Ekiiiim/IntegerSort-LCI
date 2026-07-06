@@ -15,6 +15,7 @@ stages live in focused files under `LCI/`.
 
 | Paper stage | Code interface | Responsibility |
 | --- | --- | --- |
+| Problem config/types | `LCI/is_config.hpp` | Define NAS class constants, derived problem sizes, and shared `Count`/`Rank` types. |
 | GenerateGaussianKeys | `LCI/key_generation.hpp` | Generate the local NPB Gaussian-like key sequence for one rank. |
 | CountBuckets | `LCI/bucket_plan.hpp::count_local_buckets` | Count local keys into bucket intervals. |
 | Global bucket totals | `LCI/is.cpp` driver | Use LCI reduce plus broadcast to compute global bucket sizes. |

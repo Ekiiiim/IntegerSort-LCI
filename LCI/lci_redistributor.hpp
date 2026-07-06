@@ -20,7 +20,7 @@ struct RedistributorOptions {
 // Paper Step 4 interface: runtime state for the LCI active-message redistributor.
 struct RedistributorRuntime {
   lci::comp_t handler = nullptr;
-  lci::rcomp_t rcomp = nullptr;
+  lci::rcomp_t rcomp = 0;
   lci::comp_t send_counter = nullptr;
   std::atomic<Count>* frequency_histogram = nullptr;
   std::atomic<size_t> received_count{0};

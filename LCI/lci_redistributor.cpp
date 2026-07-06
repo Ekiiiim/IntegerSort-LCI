@@ -184,8 +184,15 @@ void initialize_redistributor(RedistributorRuntime* runtime,
 }
 
 void finalize_redistributor(RedistributorRuntime* runtime) {
+  if (runtime->rcomp != 0) {
+    lci::deregister_rcomp(runtime->rcomp);
+    runtime->rcomp = 0;
+  }
   if (runtime->handler != nullptr) {
     lci::free_comp(&runtime->handler);
+  }
+  if (runtime->send_counter != nullptr) {
+    lci::free_comp(&runtime->send_counter);
   }
   if (runtime->fallback_buffer != nullptr) {
     std::free(runtime->fallback_buffer);
@@ -193,6 +200,7 @@ void finalize_redistributor(RedistributorRuntime* runtime) {
     runtime->fallback_buffer_bytes = 0;
   }
   active_runtime = nullptr;
+  active_runtime_uses_upacket = true;
 }
 
 void allocate_fallback_buffers(RedistributorRuntime* runtime,

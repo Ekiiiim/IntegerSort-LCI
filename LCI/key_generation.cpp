@@ -2,6 +2,9 @@
 
 namespace is_lci {
 
+// NPB randlc portable random number generator used by paper Step 1 key
+// generation. It advances `seed` by multiplying with `multiplier` modulo 2^46
+// and returns the normalized value in (0, 1).
 double randlc(double* seed, double* multiplier) {
   static int ks = 0;
   static double r23, r46, t23, t46;
