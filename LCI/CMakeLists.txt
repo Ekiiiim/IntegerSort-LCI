@@ -45,7 +45,10 @@ option(IS_LCI_ENABLE_TIMERS "Enable LCI alltoall thread-local timer profiling (v
 foreach(CLASS ${NPB_CLASSES})
   set(TARGET_NAME is_lci_${CLASS})
 
-  add_executable(${TARGET_NAME} is.cpp a2a_tl_timers.cpp)
+  add_executable(${TARGET_NAME}
+    is.cpp
+    key_generation.cpp
+    a2a_tl_timers.cpp)
 
   # Include directories
   target_include_directories(${TARGET_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}

@@ -58,6 +58,8 @@
  *************************************************************************/
 
 #include "a2a_tl_timers.hpp"
+#include "is_config.hpp"
+#include "key_generation.hpp"
 
 #include <lci.hpp>
 #include <stdlib.h>
@@ -66,109 +68,6 @@
 #include <omp.h>
 #include <map>
 #include <atomic>
-
-/******************/
-/* default values */
-/******************/
-#ifndef CLASS
-#define CLASS 'S'
-#define NUM_PROCS            1
-#endif
-#define MIN_PROCS            1
-#define ONE                  1
-
-/*************/
-/*  CLASS S  */
-/*************/
-#if CLASS == 'S'
-#define  TOTAL_KEYS_LOG_2    16
-#define  MAX_KEY_LOG_2       11
-#define  NUM_BUCKETS_LOG_2   9
-#endif
-
-/*************/
-/*  CLASS W  */
-/*************/
-#if CLASS == 'W'
-#define  TOTAL_KEYS_LOG_2    20
-#define  MAX_KEY_LOG_2       16
-#define  NUM_BUCKETS_LOG_2   10
-#endif
-
-/*************/
-/*  CLASS A  */
-/*************/
-#if CLASS == 'A'
-#define  TOTAL_KEYS_LOG_2    23
-#define  MAX_KEY_LOG_2       19
-#define  NUM_BUCKETS_LOG_2   10
-#endif
-
-/*************/
-/*  CLASS B  */
-/*************/
-#if CLASS == 'B'
-#define  TOTAL_KEYS_LOG_2    25
-#define  MAX_KEY_LOG_2       21
-#define  NUM_BUCKETS_LOG_2   10
-#endif
-
-/*************/
-/*  CLASS C  */
-/*************/
-#if CLASS == 'C'
-#define  TOTAL_KEYS_LOG_2    27
-#define  MAX_KEY_LOG_2       23
-#define  NUM_BUCKETS_LOG_2   10
-#endif
-
-/*************/
-/*  CLASS D  */
-/*************/
-#if CLASS == 'D'
-#define  TOTAL_KEYS_LOG_2    29     /* 2^31 */
-#define  MAX_KEY_LOG_2       27
-#define  NUM_BUCKETS_LOG_2   10
-#undef   MIN_PROCS
-#define  MIN_PROCS           4
-#endif
-
-/*************/
-/*  CLASS E  */
-/*************/
-#if CLASS == 'E'
-#define  TOTAL_KEYS_LOG_2    29     /* 2^35 */
-#define  MAX_KEY_LOG_2       31
-#define  NUM_BUCKETS_LOG_2   10
-#undef   MIN_PROCS
-#define  MIN_PROCS           64
-#undef   ONE
-#define  ONE                 1L
-#endif
-
-/*******************************************************************
- * Defining MIN_PROCS is to avoid integer overflow for large problem
- * sizes without using a larger integer type, such as long int.
- * The actual total keys = TOTAL_KEYS * MIN_PROCS
- *******************************************************************/
-#define  TOTAL_KEYS          (1 << TOTAL_KEYS_LOG_2)
-
-#define  MAX_KEY             (ONE << MAX_KEY_LOG_2)
-#define  NUM_BUCKETS         (1 << NUM_BUCKETS_LOG_2)
-
-/*****************************************************************/
-/* NOTE: THIS CODE CANNOT BE RUN ON ARBITRARILY LARGE NUMBERS OF */
-/* PROCESSORS. THE LARGEST VERIFIED NUMBER IS 1024. INCREASE     */
-/* MAX_PROCS AT YOUR PERIL                                       */
-/*****************************************************************/
-#if CLASS == 'S'
-#define  MAX_PROCS           128
-#else
-#define  MAX_PROCS           4096
-#endif
-
-#define  MAX_ITERATIONS      10
-#define  TEST_ARRAY_SIZE     5
 
 /*****************************************************************/
 /* Number of keys batched into one active message (Step 4).      */
@@ -326,11 +225,6 @@ long     D_test_index_array[TEST_ARRAY_SIZE] =
          E_test_rank_array[TEST_ARRAY_SIZE] =
                              {3L,27580354L,3248475153L,30048754302L,31485259697L};
 
-/***********************/
-/* function prototypes */
-/***********************/
-double	randlc( double *X, double *A );
-
 void full_verify( void );
 
 #ifdef __cplusplus
@@ -457,122 +351,6 @@ void free_space(void)
 /*************    portable random number generator    ************/
 /*****************************************************************/
 
-double	randlc( double *X, double *A )
-{
-      static int        KS=0;
-      static double	R23, R46, T23, T46;
-      double		T1, T2, T3, T4;
-      double		A1;
-      double		A2;
-      double		X1;
-      double		X2;
-      double		Z;
-      int     		i, j;
-
-      if (KS == 0)
-      {
-        R23 = 1.0;
-        R46 = 1.0;
-        T23 = 1.0;
-        T46 = 1.0;
-
-        for (i=1; i<=23; i++)
-        {
-          R23 = 0.50 * R23;
-          T23 = 2.0 * T23;
-        }
-        for (i=1; i<=46; i++)
-        {
-          R46 = 0.50 * R46;
-          T46 = 2.0 * T46;
-        }
-        KS = 1;
-      }
-
-/*  Break A into two parts such that A = 2^23 * A1 + A2 and set X = N.  */
-
-      T1 = R23 * *A;
-      j  = T1;
-      A1 = j;
-      A2 = *A - T23 * A1;
-
-/*  Break X into two parts such that X = 2^23 * X1 + X2, compute
-    Z = A1 * X2 + A2 * X1  (mod 2^23), and then
-    X = 2^23 * Z + A2 * X2  (mod 2^46).                            */
-
-      T1 = R23 * *X;
-      j  = T1;
-      X1 = j;
-      X2 = *X - T23 * X1;
-      T1 = A1 * X2 + A2 * X1;
-
-      j  = R23 * T1;
-      T2 = j;
-      Z = T1 - T23 * T2;
-      T3 = T23 * Z + A2 * X2;
-      j  = R46 * T3;
-      T4 = j;
-      *X = T3 - T46 * T4;
-      return(R46 * *X);
-}
-
-/*****************************************************************/
-/************   F  I  N  D  _  M  Y  _  S  E  E  D    ************/
-/************                                         ************/
-/************ returns parallel random number seq seed ************/
-/*****************************************************************/
-
-/*
- * Create a random number sequence of total length nn residing
- * on np number of processors.  Each processor will therefore have a
- * subsequence of length nn/np.  This routine returns that random
- * number which is the first random number for the subsequence belonging
- * to processor rank kn, and which is used as seed for proc kn ran # gen.
- */
-
-double   find_my_seed( int  kn,       /* my processor rank, 0<=kn<=num procs */
-                       int  np,       /* np = num procs                      */
-                       long nn,       /* total num of ran numbers, all procs */
-                       double s,      /* Ran num seed, for ex.: 314159265.00 */
-                       double a )     /* Ran num gen mult, try 1220703125.00 */
-{
-
-  long   i;
-
-  double t1,t2,t3,an;
-  long   mq,nq,kk,ik;
-
-      nq = nn / np;
-
-      for( mq=0; nq>1; mq++,nq/=2 )
-          ;
-
-      t1 = a;
-
-      for( i=1; i<=mq; i++ )
-        t2 = randlc( &t1, &t1 );
-
-      an = t1;
-
-      kk = kn;
-      t1 = s;
-      t2 = an;
-
-      for( i=1; i<=100; i++ )
-      {
-        ik = kk / 2;
-        if( 2 * ik !=  kk )
-            t3 = randlc( &t1, &t2 );
-        if( ik == 0 )
-            break;
-        t3 = randlc( &t2, &t2 );
-        kk = ik;
-      }
-
-      return( t1 );
-
-}
-
 /*****************************************************************/
 /*************   C  H  E  C  K  _  U  S  E  _  U  P  A  C  K  E  T  **/
 /*****************************************************************/
@@ -625,33 +403,6 @@ int check_loopback_flag( void )
     }
 
     return loopback_on;
-}
-
-/*****************************************************************/
-/*************      C  R  E  A  T  E  _  S  E  Q      ************/
-/*****************************************************************/
-
-/*
- * Step 1: generate this rank's keys with the NPB randlc() generator. Each
- * key is the sum of four uniform random values, giving a Gaussian-like
- * distribution over [0, MAX_KEY).
- */
-void	create_seq( double seed, double a )
-{
-	double x;
-	int    i, k;
-
-	k = MAX_KEY/4;
-
-	for (i=0; i<num_keys; i++)
-	{
-		x = randlc(&seed, &a);
-		x += randlc(&seed, &a);
-		x += randlc(&seed, &a);
-		x += randlc(&seed, &a);
-
-		key_array[i] = k*x;
-	}
 }
 
 /*****************************************************************/
@@ -1514,12 +1265,16 @@ int main( int argc, char **argv )
     alloc_space();
 
 /*  Generate random number sequence and subsequent keys on all procs */
-    create_seq( find_my_seed( my_rank,
-                              comm_size,
-                              4*(long)TOTAL_KEYS*MIN_PROCS,
-                              314159265.00,      /* Random number gen seed */
-                              1220703125.00 ),   /* Random number gen mult */
-                1220703125.00 );                 /* Random number gen mult */
+    is_lci::generate_keys(
+        key_array,
+        num_keys,
+        is_lci::problem_config().max_key,
+        is_lci::find_my_seed(my_rank,
+                             comm_size,
+                             4 * (long)TOTAL_KEYS * MIN_PROCS,
+                             314159265.00,
+                             1220703125.00),
+        1220703125.00);
 
 /*  Initialize LCI active message properties */
     send_counter = lci::alloc_counter();
