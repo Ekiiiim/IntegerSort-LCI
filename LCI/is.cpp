@@ -69,8 +69,11 @@
 #include <stdio.h>
 #include <string.h>
 #include <omp.h>
-#include <map>
 #include <atomic>
+#include <vector>
+
+using INT_TYPE = is_lci::Count;
+using KEY_TYPE = is_lci::Rank;
 
 /*****************************************************************/
 /* Number of keys batched into one active message (Step 4).      */
@@ -134,18 +137,6 @@ int timeron;
 int use_upacket;
 int use_loopback;
 
-/*************************************/
-/* Typedef: if necessary, change the */
-/* size of int here by changing the  */
-/* int type to, say, long            */
-/*************************************/
-// Note: KEY_TYPE is the type of variables used for counting keys/ranks
-typedef  int  INT_TYPE;
-#if CLASS == 'D' || CLASS == 'E'
-typedef  long KEY_TYPE;
-#else
-typedef  int  KEY_TYPE;
-#endif
 #define MP_KEY_TYPE MPI_INT
 
 /********************/
@@ -256,9 +247,6 @@ void c_print_results( const char   *name,
 #endif
 
 #include "../common/c_timers.h"
-#include <iostream>
-#include <unistd.h>
-
 /*****************************************************************/
 /*     Dynamically allocate space for main arrays                */
 /*****************************************************************/
@@ -610,9 +598,8 @@ void rank( int iteration )
 
     TIMER_START( T_RANK_1_1 );
 
-/*  Step 2: organize keys into buckets -- count keys per local bucket    */
-/*  (threads build private histograms, then merge; the global reduce     */
-/*  below completes Step 2).                                             */
+/*  Step 2: count keys into local buckets; the global reduce/broadcast
+    below completes the paper's global bucket-sizing stage.            */
     is_lci::count_local_buckets(
         key_array, num_keys, shift, bucket_size, NUM_BUCKETS);
 
@@ -622,32 +609,24 @@ void rank( int iteration )
 
     TIMER_START( T_RCOMM );
 
-/*  Get the bucket size totals for the entire problem. These
-    will be used to determine the redistribution of keys      */
-    lci::reduce_x(bucket_size, bucket_size_totals, NUM_BUCKETS+TEST_ARRAY_SIZE, sizeof(INT_TYPE), sum_op_int, 0).device(devices[0])();
-    lci::broadcast_x(bucket_size_totals, (NUM_BUCKETS+TEST_ARRAY_SIZE) * sizeof(INT_TYPE), 0).device(devices[0])();
+/*  Complete Step 2 by aggregating and sharing the global bucket sizes. */
+    lci::reduce_x(bucket_size,
+                  bucket_size_totals,
+                  NUM_BUCKETS + TEST_ARRAY_SIZE,
+                  sizeof(INT_TYPE),
+                  sum_op_int,
+                  0).device(devices[0])();
+    lci::broadcast_x(bucket_size_totals,
+                     (NUM_BUCKETS + TEST_ARRAY_SIZE) * sizeof(INT_TYPE),
+                     0).device(devices[0])();
 
     TIMER_STOP( T_RCOMM );
 
     TIMER_START( T_RANK );
     TIMER_START( T_RANK_2 );
 
-/*  Step 3: greedily assign buckets to processes (coarse load balancing).
-    Accumulate the bucket size totals until the running total surpasses
-    NUM_KEYS (which is the average number of keys
-    per processor).  Then all keys in these buckets go to processor 0.
-    Continue accumulating again until surpassing 2*NUM_KEYS. All keys
-    in these buckets go to processor 1, etc.  This algorithm guarantees
-    that all processors have work ranking; no processors are left idle.
-    The optimum number of buckets, however, does not result in as high
-    a degree of load balancing (as even a distribution of keys as is
-    possible) as is obtained from increasing the number of buckets, but
-    more buckets results in more computation per processor so that the
-    optimum number of buckets turns out to be 1024 for machines tested.
-    Note that process_bucket_distrib_ptr1 and ..._ptr2 hold the bucket
-    number of first and last bucket which each processor will have after
-    the redistribution is done.                                          */
-
+/*  Step 3: greedily assign buckets to processes for coarse load
+    balancing and derive the local key interval for this rank.      */
     is_lci::BucketPlan bucket_plan = is_lci::build_bucket_plan(
         bucket_size,
         bucket_size_totals,
@@ -673,8 +652,7 @@ void rank( int iteration )
         cumulative_key_buff_ptr[i] = 0;
     }
 
-/*  Ranking of all keys occurs in this section:                 */
-/*  shift it backwards so no subtractions are necessary in loop */
+/*  Shift the work array backwards so local rank updates can index by key. */
     key_buff_ptr = key_buff1 - min_key_val;
     is_lci::reset_redistributor_iteration(&redistributor_runtime, key_buff_ptr);
 
@@ -689,11 +667,8 @@ void rank( int iteration )
     a2atl::init(omp_get_max_threads());
 #endif
 
-/*  Step 4: redistribute keys with fine-grained active messages. Each thread
-    routes each of its keys to the process that owns the key's bucket, batching
-    into per-destination send buffers and flushing them as active messages,
-    then progresses LCI until this process has received all expected keys
-    (tallied into the local frequency histogram by the redistributor).         */
+/*  Step 4: redistribute keys with fine-grained active messages and tally
+    arrivals into the local frequency histogram.                         */
     is_lci::RedistributorOptions redistributor_options{
         use_upacket == 1,
         use_loopback == 1,
@@ -724,15 +699,8 @@ void rank( int iteration )
     TIMER_START( T_RANK );
     TIMER_START( T_RANK_3 );
 
-/*  Step 5: compute final key ranks by prefix-summing the key-frequency
-    array. Successively add each key population, not forgetting the total of
-    lesser keys, m.
-    NOTE: Since the total of lesser keys would be subtracted later
-    in verification, it is no longer added to the first key population
-    here, but still needed during the partial verify test.  This is to
-    ensure that 32-bit key_buff can still be used for class D.
-    The scan is parallel: per-thread partial sums, an exclusive scan of
-    those into offsets, then each thread scans its chunk from its offset.  */
+/*  Step 5: prefix-sum the local key-frequency array into final ranks.
+    The lesser-key total m remains part of partial verification only.   */
     KEY_TYPE* cumulative = cumulative_key_buff_ptr - min_key_val;
     is_lci::compute_local_ranks(key_buff_ptr,
                                 cumulative,
