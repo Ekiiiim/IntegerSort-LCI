@@ -1,5 +1,11 @@
 #pragma once
 
+/*************************************************************************
+ * NAS Parallel Benchmarks IS problem constants.
+ *
+ * These definitions are split out from the NPB 3.4 MPI IS implementation.
+ *************************************************************************/
+
 /******************/
 /* default values */
 /******************/
@@ -59,7 +65,7 @@
 /*  CLASS D  */
 /*************/
 #if CLASS == 'D'
-#define TOTAL_KEYS_LOG_2 29
+#define TOTAL_KEYS_LOG_2 29 /* 2^31 */
 #define MAX_KEY_LOG_2 27
 #define NUM_BUCKETS_LOG_2 10
 #undef MIN_PROCS
@@ -70,7 +76,7 @@
 /*  CLASS E  */
 /*************/
 #if CLASS == 'E'
-#define TOTAL_KEYS_LOG_2 29
+#define TOTAL_KEYS_LOG_2 29 /* 2^35 */
 #define MAX_KEY_LOG_2 31
 #define NUM_BUCKETS_LOG_2 10
 #undef MIN_PROCS
@@ -80,61 +86,25 @@
 #endif
 
 /*******************************************************************
- * Defining MIN_PROCS avoids integer overflow for large problem
- * sizes without using a larger integer type for TOTAL_KEYS.
- * The actual total keys = TOTAL_KEYS * MIN_PROCS.
+ * Defining MIN_PROCS is to avoid integer overflow for large problem
+ * sizes without using a larger integer type, such as long int.
+ * The actual total keys = TOTAL_KEYS * MIN_PROCS
  *******************************************************************/
 #define TOTAL_KEYS (1 << TOTAL_KEYS_LOG_2)
+
 #define MAX_KEY (ONE << MAX_KEY_LOG_2)
 #define NUM_BUCKETS (1 << NUM_BUCKETS_LOG_2)
 
+/*****************************************************************/
+/* NOTE: THIS CODE CANNOT BE RUN ON ARBITRARILY LARGE NUMBERS OF */
+/* PROCESSORS. THE LARGEST VERIFIED NUMBER IS 1024. INCREASE     */
+/* MAX_PROCS AT YOUR PERIL                                       */
+/*****************************************************************/
 #if CLASS == 'S'
 #define MAX_PROCS 128
 #else
-#define MAX_PROCS 4096
+#define MAX_PROCS 1024
 #endif
 
 #define MAX_ITERATIONS 10
 #define TEST_ARRAY_SIZE 5
-
-namespace is_lci {
-
-using Count = int;
-
-#if CLASS == 'D' || CLASS == 'E'
-using Rank = long;
-#else
-using Rank = int;
-#endif
-
-struct ProblemConfig {
-  char benchmark_class;
-  int total_keys_log2;
-  int max_key_log2;
-  int num_buckets_log2;
-  Rank total_keys;
-  Rank max_key;
-  int num_buckets;
-  int min_processes;
-  int max_processes;
-  int iterations;
-};
-
-// ProblemConfig is the benchmark/problem configuration interface used before
-// paper Step 1 key generation.
-inline ProblemConfig problem_config() {
-  return ProblemConfig{
-      CLASS,
-      TOTAL_KEYS_LOG_2,
-      MAX_KEY_LOG_2,
-      NUM_BUCKETS_LOG_2,
-      static_cast<Rank>(TOTAL_KEYS) * static_cast<Rank>(MIN_PROCS),
-      static_cast<Rank>(MAX_KEY),
-      NUM_BUCKETS,
-      MIN_PROCS,
-      MAX_PROCS,
-      MAX_ITERATIONS,
-  };
-}
-
-} // namespace is_lci

@@ -1,0 +1,97 @@
+/*************************************************************************
+ * LCI benchmark verification harness.
+ *
+ * NAS partial-verification cases live in benchmark/nas/verification_cases.
+ * This file contains the LCI-specific verification flow around those cases.
+ *************************************************************************/
+
+#include "benchmark/verification/verification.hpp"
+
+#include "benchmark/timing/timers.hpp"
+#include "benchmark/nas/verification_cases.hpp"
+
+#include <omp.h>
+
+#include <cstdio>
+
+namespace is_lci {
+
+void verify_partial_keys(int iteration, KeyValue min_key_value, KeyValue max_key_value, KeyRank lesser_key_count,
+                         const KeyRank* cumulative_by_key, const KeyCount* bucket_size_totals,
+                         const VerificationData& verification, int my_rank, int* passed_verification) {
+  for (int i = 0; i < TEST_ARRAY_SIZE; i++) {
+    KeyValue key = static_cast<KeyValue>(bucket_size_totals[i + NUM_BUCKETS]);
+    if (min_key_value <= key && key <= max_key_value) {
+      KeyRank key_rank = cumulative_by_key[key - 1] + lesser_key_count;
+      KeyRank test_rank = adjusted_test_rank(iteration, i, verification.test_rank[i]);
+
+      if (key_rank == test_rank) {
+        (*passed_verification)++;
+      } else {
+        printf("Failed partial verification: iteration %d, processor %d, test key %d, key rank %ld\n", iteration,
+               my_rank, i, static_cast<long>(key_rank));
+      }
+    }
+  }
+}
+
+void full_verify(KeyValue* key_array, const FullVerifySnapshot& snapshot, int my_rank, int comm_size,
+                 const std::vector<lci::device_t>& devices, int timeron, int* passed_verification) {
+  lci::comp_t sync = lci::alloc_sync();
+  lci::comp_t sync_send = lci::alloc_sync();
+
+  timer_start_if_enabled(T_VERIFY, timeron);
+
+  KeyCount idx = 0;
+  for (KeyRank key = snapshot.min_key_value; key <= snapshot.max_key_value; ++key) {
+    KeyCount count = snapshot.frequency_histogram[key].load(std::memory_order_relaxed);
+    for (KeyCount c = 0; c < count; ++c) {
+      key_array[idx++] = static_cast<KeyValue>(key);
+    }
+  }
+
+  KeyValue previous_rank_last_key = 0;
+  if (my_rank > 0) {
+    lci::post_recv_x(my_rank - 1, &previous_rank_last_key, sizeof(KeyValue), 1000, sync)
+        .device(devices[0])
+        .allow_done(false)();
+  }
+  if (my_rank < comm_size - 1) {
+    KeyCount last_local_key = (idx == 0) ? idx : (idx - 1);
+    while (lci::post_send_x(my_rank + 1, &key_array[last_local_key], sizeof(KeyValue), 1000, sync_send)
+               .device(devices[0])
+               .allow_done(false)()
+               .is_retry()) {
+      lci::progress_x().device(devices[0])();
+    }
+    lci::sync_wait_x(sync_send, nullptr).device(devices[0])();
+  }
+  if (my_rank > 0) {
+    lci::sync_wait_x(sync, nullptr).device(devices[0])();
+  }
+
+  lci::free_comp(&sync);
+  lci::free_comp(&sync_send);
+
+  KeyCount out_of_order = 0;
+  if (my_rank > 0 && snapshot.total_local_keys > 0 && previous_rank_last_key > key_array[0]) {
+    out_of_order++;
+  }
+
+#pragma omp parallel for schedule(static) reduction(+ : out_of_order)
+  for (KeyCount i = 1; i < snapshot.total_local_keys; i++) {
+    if (key_array[i - 1] > key_array[i]) {
+      out_of_order++;
+    }
+  }
+
+  if (out_of_order != 0) {
+    printf("Processor %d:  Full_verify: number of keys out of sort: %d\n", my_rank, out_of_order);
+  } else {
+    (*passed_verification)++;
+  }
+
+  timer_stop_if_enabled(T_VERIFY, timeron);
+}
+
+} // namespace is_lci

@@ -1,6 +1,8 @@
 // a2a_tl_timers.hpp
 #pragma once
 
+#include "types.hpp"
+
 // Turn the whole module into no-ops unless A2A_TL_TIMERS is defined
 #ifdef A2A_TL_TIMERS
 
@@ -10,13 +12,7 @@
 namespace a2atl {
 
 // Steps you already track
-enum Step : int {
-  A2A_FLUSH_SEND = 0,
-  A2A_PROGRESS_WAIT,
-  A2A_AM_COPY,
-  A2A_SELF_COPY,
-  A2A_NUM_STEPS
-};
+enum Step : int { A2A_FLUSH_SEND = 0, A2A_PROGRESS_WAIT, A2A_AM_COPY, A2A_SELF_COPY, A2A_NUM_STEPS };
 
 struct ThreadStats {
   uint64_t calls[A2A_NUM_STEPS];
@@ -53,38 +49,47 @@ void print_per_process(int iteration, int rank, long long total_local_keys, doub
 } // namespace a2atl
 
 enum {
-  A2A_FLUSH_SEND  = ::a2atl::A2A_FLUSH_SEND,
+  A2A_FLUSH_SEND = ::a2atl::A2A_FLUSH_SEND,
   A2A_PROGRESS_WAIT = ::a2atl::A2A_PROGRESS_WAIT,
-  A2A_AM_COPY     = ::a2atl::A2A_AM_COPY,
-  A2A_SELF_COPY   = ::a2atl::A2A_SELF_COPY,
-  A2A_NUM_STEPS   = ::a2atl::A2A_NUM_STEPS
+  A2A_AM_COPY = ::a2atl::A2A_AM_COPY,
+  A2A_SELF_COPY = ::a2atl::A2A_SELF_COPY,
+  A2A_NUM_STEPS = ::a2atl::A2A_NUM_STEPS
 };
 
 // Convenience macros to mirror your current call sites
 #define TL_STEP_START(step) ::a2atl::step_start(::a2atl::Step(step))
-#define TL_STEP_STOP(step)  ::a2atl::step_stop(::a2atl::Step(step))
+#define TL_STEP_STOP(step) ::a2atl::step_stop(::a2atl::Step(step))
 #define TL_ADD_BYTES(step, nbytes) ::a2atl::add_bytes(::a2atl::Step(step), (uint64_t)(nbytes))
 
-#else  // -------- A2A_TL_TIMERS not defined: compile to no-ops ----------
+#else // -------- A2A_TL_TIMERS not defined: compile to no-ops ----------
 
 namespace a2atl {
 enum Step : int { A2A_NUM_STEPS = 0 };
 inline void init(int) {}
 inline void reset_thread_local(int) {}
 inline void publish_thread_stats(int) {}
-inline const char* step_name(int){ return ""; }
+inline const char* step_name(int) {
+  return "";
+}
 } // namespace a2atl
 
-enum {
-  A2A_FLUSH_SEND = 0,
-  A2A_PROGRESS_WAIT = 0,
-  A2A_AM_COPY = 0,
-  A2A_SELF_COPY = 0,
-  A2A_NUM_STEPS = 0
-};
+enum { A2A_FLUSH_SEND = 0, A2A_PROGRESS_WAIT = 0, A2A_AM_COPY = 0, A2A_SELF_COPY = 0, A2A_NUM_STEPS = 0 };
 
-#define TL_STEP_START(step) do{}while(0)
-#define TL_STEP_STOP(step)  do{}while(0)
-#define TL_ADD_BYTES(step, nbytes) do{}while(0)
+#define TL_STEP_START(step)                                                                                            \
+  do {                                                                                                                 \
+  } while (0)
+#define TL_STEP_STOP(step)                                                                                             \
+  do {                                                                                                                 \
+  } while (0)
+#define TL_ADD_BYTES(step, nbytes)                                                                                     \
+  do {                                                                                                                 \
+  } while (0)
 
 #endif // A2A_TL_TIMERS
+
+namespace is_lci {
+
+void begin_thread_local_alltoall_timers();
+void finish_thread_local_alltoall_timers(int iteration, int my_rank, KeyCount local_key_count, double rank_time);
+
+} // namespace is_lci

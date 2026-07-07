@@ -1,10 +1,14 @@
-#include "key_generation.hpp"
+/*************************************************************************
+ * NAS Parallel Benchmarks IS input generation.
+ *
+ * These routines preserve the baseline NPB randlc/find_my_seed/create_seq
+ * behavior while parameterizing the destination key buffer for the LCI driver.
+ *************************************************************************/
+
+#include "benchmark/nas/key_generation.hpp"
 
 namespace is_lci {
 
-// NPB randlc portable random number generator used by paper Step 1 key
-// generation. It advances `seed` by multiplying with `multiplier` modulo 2^46
-// and returns the normalized value in (0, 1).
 double randlc(double* seed, double* multiplier) {
   static int ks = 0;
   static double r23, r46, t23, t46;
@@ -54,11 +58,7 @@ double randlc(double* seed, double* multiplier) {
   return r46 * *seed;
 }
 
-double find_my_seed(int rank,
-                    int comm_size,
-                    long total_random_numbers,
-                    double seed,
-                    double multiplier) {
+double find_my_seed(int rank, int comm_size, long total_random_numbers, double seed, double multiplier) {
   long i;
   double t1, t2, t3, an;
   long mq, nq, kk, ik;
@@ -94,20 +94,16 @@ double find_my_seed(int rank,
   return t1;
 }
 
-void generate_keys(Count* keys,
-                   int local_key_count,
-                   Rank max_key,
-                   double seed,
-                   double multiplier) {
+void generate_keys(KeyValue* keys, KeyCount local_key_count, KeyRank max_key, double seed, double multiplier) {
   const int key_scale = static_cast<int>(max_key / 4);
 
-  for (int i = 0; i < local_key_count; i++) {
+  for (KeyCount i = 0; i < local_key_count; i++) {
     double x = randlc(&seed, &multiplier);
     x += randlc(&seed, &multiplier);
     x += randlc(&seed, &multiplier);
     x += randlc(&seed, &multiplier);
 
-    keys[i] = static_cast<Count>(key_scale * x);
+    keys[i] = static_cast<KeyValue>(key_scale * x);
   }
 }
 
