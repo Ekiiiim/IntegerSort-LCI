@@ -1,6 +1,6 @@
 #pragma once
 
-#include "benchmark/nas/problem_config.hpp"
+#include "nas/problem_config.hpp"
 
 namespace is_lci {
 

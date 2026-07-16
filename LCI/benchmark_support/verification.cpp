@@ -1,14 +1,14 @@
 /*************************************************************************
- * LCI benchmark verification harness.
+ * LCI benchmark verification support.
  *
- * NAS partial-verification cases live in benchmark/nas/verification_cases.
- * This file contains the LCI-specific verification flow around those cases.
+ * NAS partial-verification rules live in nas/verification_rules. This file
+ * keeps the LCI benchmark-side counter updates, printing, and full verify.
  *************************************************************************/
 
-#include "benchmark/verification/verification.hpp"
+#include "benchmark_support/verification.hpp"
 
-#include "benchmark/timing/timers.hpp"
-#include "benchmark/nas/verification_cases.hpp"
+#include "benchmark_support/benchmark_timers.hpp"
+#include "nas/verification_rules.hpp"
 
 #include <omp.h>
 
@@ -20,17 +20,18 @@ void verify_partial_keys(int iteration, KeyValue min_key_value, KeyValue max_key
                          const KeyRank* cumulative_by_key, const KeyCount* bucket_size_totals,
                          const VerificationData& verification, int my_rank, int* passed_verification) {
   for (int i = 0; i < TEST_ARRAY_SIZE; i++) {
-    KeyValue key = static_cast<KeyValue>(bucket_size_totals[i + NUM_BUCKETS]);
-    if (min_key_value <= key && key <= max_key_value) {
-      KeyRank key_rank = cumulative_by_key[key - 1] + lesser_key_count;
-      KeyRank test_rank = adjusted_test_rank(iteration, i, verification.test_rank[i]);
+    PartialVerificationResult result =
+        check_partial_verification_key(iteration, i, min_key_value, max_key_value, lesser_key_count, cumulative_by_key,
+                                       bucket_size_totals, verification);
+    if (!result.checked) {
+      continue;
+    }
 
-      if (key_rank == test_rank) {
-        (*passed_verification)++;
-      } else {
-        printf("Failed partial verification: iteration %d, processor %d, test key %d, key rank %ld\n", iteration,
-               my_rank, i, static_cast<long>(key_rank));
-      }
+    if (result.passed) {
+      (*passed_verification)++;
+    } else {
+      printf("Failed partial verification: iteration %d, processor %d, test key %d, key rank %ld\n", iteration, my_rank,
+             result.test_id, static_cast<long>(result.computed_rank));
     }
   }
 }

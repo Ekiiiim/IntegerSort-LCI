@@ -1,5 +1,4 @@
-// a2a_tl_timers.cpp
-#include "a2a_tl_timers.hpp"
+#include "communication/profiling/a2a_thread_profile.hpp"
 
 #ifdef A2A_TL_TIMERS
 
@@ -79,7 +78,7 @@ const char* step_name(Step s) {
   return (s >= 0 && s < A2A_NUM_STEPS) ? names[s] : "?";
 }
 
-// ------- Pretty print helpers (match your old prints) --------
+// ------- Pretty print helpers --------
 void print_per_thread(int iteration, int rank) {
   const auto& stats = get_thread_stats();
   std::printf("A2A per-thread timers (iteration %d, rank %d):\n", iteration, rank);

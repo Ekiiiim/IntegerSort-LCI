@@ -15,7 +15,7 @@ constexpr int T_RANK_1 = 5;
 constexpr int T_RANK_2 = 6;
 constexpr int T_RANK_3 = 7;
 constexpr int T_RANK_1_1 = 8;
-constexpr int T_LAST = 9;
+constexpr int T_LAST = T_RANK_1_1;
 
 void timer_start_if_enabled(int timer_id, int timeron);
 void timer_stop_if_enabled(int timer_id, int timeron);

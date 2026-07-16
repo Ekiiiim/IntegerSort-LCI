@@ -1,6 +1,7 @@
-#include "benchmark/driver/results.hpp"
+#include "benchmark_support/results.hpp"
 
-#include "benchmark/nas/problem_config.hpp"
+#include "nas/problem_config.hpp"
+#include "nas/reporting_rules.hpp"
 
 #include <cstdio>
 
@@ -30,11 +31,10 @@ void print_initial_status(int my_rank, int np_total, int comm_size, int use_upac
 }
 
 void print_final_results(int comm_size, int np_total, double maxtime, int passed_verification) {
-  int expected_verification = 5 * MAX_ITERATIONS + comm_size;
-  int final_verification = (passed_verification == expected_verification) ? passed_verification : 0;
+  int final_verification = final_verification_status(passed_verification, comm_size);
   c_print_results("IS", CLASS, static_cast<int>(TOTAL_KEYS), MIN_PROCS, 0, MAX_ITERATIONS, comm_size, np_total, maxtime,
-                  (static_cast<double>(MAX_ITERATIONS) * TOTAL_KEYS * MIN_PROCS) / maxtime / 1000000., "keys ranked",
-                  final_verification, NPBVERSION, COMPILETIME, MPICC, CLINK, CMPI_LIB, CMPI_INC, CFLAGS, CLINKFLAGS);
+                  compute_keys_ranked_mops(maxtime), "keys ranked", final_verification, NPBVERSION, COMPILETIME, MPICC,
+                  CLINK, CMPI_LIB, CMPI_INC, CFLAGS, CLINKFLAGS);
 }
 
 } // namespace is_lci

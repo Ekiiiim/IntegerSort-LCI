@@ -47,18 +47,21 @@ foreach(CLASS ${NPB_CLASSES})
 
   add_executable(${TARGET_NAME}
     is.cpp
-    algorithm/sort_iteration.cpp
-    algorithm/bucket_plan.cpp
-    algorithm/ranking.cpp
+    benchmark_support/iteration_driver.cpp
+    benchmark_support/benchmark_timers.cpp
+    benchmark_support/results.cpp
+    benchmark_support/run_options.cpp
+    benchmark_support/verification.cpp
+    communication/profiling/a2a_thread_profile.cpp
     communication/lci_redistributor.cpp
-    benchmark/nas/key_generation.cpp
-    benchmark/nas/verification_cases.cpp
-    benchmark/driver/options.cpp
     communication/reductions.cpp
-    benchmark/driver/results.cpp
-    benchmark/timing/timers.cpp
-    benchmark/verification/verification.cpp
-    benchmark/profiling/a2a_tl_timers.cpp)
+    nas/key_generation.cpp
+    nas/reporting_rules.cpp
+    nas/run_rules.cpp
+    nas/verification_cases.cpp
+    nas/verification_rules.cpp
+    sort_core/bucket_plan.cpp
+    sort_core/ranking.cpp)
 
   # Include directories
   target_include_directories(${TARGET_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}

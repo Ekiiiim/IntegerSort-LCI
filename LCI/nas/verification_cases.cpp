@@ -5,7 +5,7 @@
  * from the NPB 3.4 MPI IS implementation.
  *************************************************************************/
 
-#include "benchmark/nas/verification_cases.hpp"
+#include "nas/verification_cases.hpp"
 
 namespace {
 

@@ -1,6 +1,6 @@
 #pragma once
 
-#include "benchmark/nas/verification_cases.hpp"
+#include "nas/verification_cases.hpp"
 
 #include <lci.hpp>
 

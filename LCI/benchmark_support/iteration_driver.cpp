@@ -1,19 +1,21 @@
 /*************************************************************************
  * LCI integer-sort iteration orchestration.
  *
- * This file is the implementation-facing algorithm skeleton for one timed
- * IS iteration. Benchmark timing and verification live under benchmark/;
- * NAS problem data stays in benchmark/nas; individual algorithm stages stay
- * in algorithm, and LCI communication stays in communication.
+ * This file wires NAS benchmark rules, reusable sort stages, and LCI
+ * communication into one IS iteration. Pure NAS rules live under nas/;
+ * reusable sort stages live under sort_core/; LCI communication lives under
+ * communication/.
  *************************************************************************/
 
-#include "algorithm/sort_iteration.hpp"
+#include "benchmark_support/iteration_driver.hpp"
 
-#include "algorithm/bucket_plan.hpp"
-#include "algorithm/ranking.hpp"
-#include "benchmark/timing/timers.hpp"
-#include "benchmark/profiling/a2a_tl_timers.hpp"
+#include "sort_core/bucket_plan.hpp"
+#include "sort_core/ranking.hpp"
+#include "benchmark_support/benchmark_timers.hpp"
+#include "communication/profiling/a2a_thread_profile.hpp"
 #include "communication/reductions.hpp"
+#include "nas/run_rules.hpp"
+#include "nas/verification_rules.hpp"
 
 #include "c_timers.h"
 
@@ -29,10 +31,7 @@ void run_sort_iteration(SortIterationContext* context) {
   timer_start_if_enabled(T_RANK, context->timeron);
   timer_start_if_enabled(T_RANK_1, context->timeron);
 
-  if (context->my_rank == 0) {
-    context->keys[context->iteration] = context->iteration;
-    context->keys[context->iteration + MAX_ITERATIONS] = MAX_KEY - context->iteration;
-  }
+  apply_iteration_key_changes(context->keys, context->iteration, context->my_rank);
 
 #pragma omp parallel for schedule(static)
   for (int i = 0; i < NUM_BUCKETS + TEST_ARRAY_SIZE; i++) {
@@ -43,12 +42,8 @@ void run_sort_iteration(SortIterationContext* context) {
     context->bucket_to_rank[i] = 0;
   }
 
-  for (int i = 0; i < TEST_ARRAY_SIZE; i++) {
-    if ((context->verification->test_index[i] / context->local_key_count) == context->my_rank) {
-      context->local_bucket_counts[NUM_BUCKETS + i] =
-          context->keys[context->verification->test_index[i] % context->local_key_count];
-    }
-  }
+  capture_partial_verification_keys(context->keys, context->local_key_count, context->my_rank, *context->verification,
+                                    context->local_bucket_counts);
 
   timer_start_if_enabled(T_RANK_1_1, context->timeron);
 

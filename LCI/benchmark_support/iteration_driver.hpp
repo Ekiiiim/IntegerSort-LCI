@@ -1,6 +1,6 @@
 #pragma once
 
-#include "benchmark/verification/verification.hpp"
+#include "benchmark_support/verification.hpp"
 #include "communication/lci_redistributor.hpp"
 #include "types.hpp"
 

@@ -15,7 +15,7 @@ struct BucketPlan {
 };
 
 // Paper Step 2: count one rank's keys into local buckets before the
-// cross-rank reduction in is.cpp.
+// cross-rank reduction in the iteration driver.
 void count_local_buckets(const KeyValue* keys, KeyCount local_key_count, int bucket_shift,
                          KeyCount* local_bucket_counts, int num_buckets);
 

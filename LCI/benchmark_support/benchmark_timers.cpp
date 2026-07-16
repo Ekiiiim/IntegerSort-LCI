@@ -1,4 +1,4 @@
-#include "benchmark/timing/timers.hpp"
+#include "benchmark_support/benchmark_timers.hpp"
 
 #include "communication/reductions.hpp"
 #include "c_timers.h"

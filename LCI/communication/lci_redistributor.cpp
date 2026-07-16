@@ -1,6 +1,6 @@
 #include "communication/lci_redistributor.hpp"
 
-#include "benchmark/profiling/a2a_tl_timers.hpp"
+#include "communication/profiling/a2a_thread_profile.hpp"
 
 #include <omp.h>
 

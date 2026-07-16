@@ -5,7 +5,7 @@
  * behavior while parameterizing the destination key buffer for the LCI driver.
  *************************************************************************/
 
-#include "benchmark/nas/key_generation.hpp"
+#include "nas/key_generation.hpp"
 
 namespace is_lci {
 

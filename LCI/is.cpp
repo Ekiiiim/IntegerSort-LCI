@@ -38,20 +38,20 @@
  *  LCI + OpenMP variant of NPB IS -- Multithreaded Fine-grained
  *  Asynchronous BSP (FA-BSP).
  *
- *  This file is intentionally a thin benchmark driver. NAS benchmark inputs
- *  live under benchmark/nas, driver-only support lives under benchmark/driver,
- *  timing and verification live under benchmark/timing and
- *  benchmark/verification, reusable LCI communication code lives under
- *  communication, and integer-sort algorithm stages live under algorithm.
+ *  This file is intentionally a thin benchmark executable. NAS benchmark
+ *  contract code lives under nas/, executable support lives under
+ *  benchmark_support/, reusable LCI communication lives under communication/,
+ *  and reusable integer-sort stages live under sort_core/.
  *************************************************************************/
 
-#include "algorithm/sort_iteration.hpp"
-#include "benchmark/driver/options.hpp"
-#include "benchmark/driver/results.hpp"
-#include "benchmark/timing/timers.hpp"
-#include "benchmark/verification/verification.hpp"
-#include "benchmark/nas/key_generation.hpp"
-#include "benchmark/nas/verification_cases.hpp"
+#include "benchmark_support/iteration_driver.hpp"
+#include "benchmark_support/run_options.hpp"
+#include "benchmark_support/results.hpp"
+#include "benchmark_support/benchmark_timers.hpp"
+#include "benchmark_support/verification.hpp"
+#include "nas/key_generation.hpp"
+#include "nas/run_rules.hpp"
+#include "nas/verification_cases.hpp"
 #include "communication/lci_redistributor.hpp"
 #include "communication/reductions.hpp"
 
@@ -64,7 +64,6 @@
 #include <atomic>
 #include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <vector>
 
 namespace {
@@ -103,18 +102,9 @@ is_lci::RedistributorRuntime redistributor_runtime;
 std::vector<lci::device_t> devices;
 
 void allocate_work_arrays() {
-  num_keys = (TOTAL_KEYS / comm_size) * MIN_PROCS;
+  num_keys = is_lci::compute_local_key_count(comm_size);
+  size_of_buffers = is_lci::compute_work_buffer_size(comm_size, num_keys);
   msg_batch_size = lci::get_max_bcopy_size() / sizeof(KeyValue) - 1;
-
-  if (comm_size < 256) {
-    size_of_buffers = 3 * num_keys / 2;
-  } else if (comm_size < 512) {
-    size_of_buffers = 5 * num_keys / 2;
-  } else if (comm_size < 1024) {
-    size_of_buffers = 4 * num_keys;
-  } else {
-    size_of_buffers = 13 * num_keys / 2;
-  }
 
   key_array = static_cast<KeyValue*>(malloc(sizeof(KeyValue) * size_of_buffers));
   key_buff1 = static_cast<std::atomic<KeyCount>*>(malloc(sizeof(std::atomic<KeyCount>) * size_of_buffers));
@@ -180,27 +170,17 @@ void free_devices() {
 }
 
 int determine_active_comm_size() {
-  for (comm_size = 1; comm_size < np_total; comm_size *= 2) {
-  }
-  if (comm_size > np_total) {
-    comm_size /= 2;
-  }
+  comm_size = is_lci::greatest_power_of_two_at_most(np_total);
 
-  int active = 1;
+  int abort_for_non_power_of_two = 1;
   if (comm_size != np_total) {
     if (my_rank == 0) {
-      char* ep = getenv("NPB_NPROCS_STRICT");
-      if (ep && *ep) {
-        if (strchr("nNfF-", *ep) || strcmp(ep, "0") == 0) {
-          active = 0;
-        } else if (strcmp(ep, "off") == 0 || strcmp(ep, "OFF") == 0) {
-          active = 0;
-        }
-      }
+      abort_for_non_power_of_two =
+          is_lci::should_abort_for_non_power_of_two_process_count(getenv("NPB_NPROCS_STRICT")) ? 1 : 0;
     }
-    lci::broadcast_x(&active, sizeof(int), 0).device(devices[0])();
+    lci::broadcast_x(&abort_for_non_power_of_two, sizeof(int), 0).device(devices[0])();
 
-    if (active) {
+    if (abort_for_non_power_of_two) {
       if (my_rank == 0) {
         fprintf(stderr,
                 "\n ERROR: Number of processes (%d) is not a power of two (%d?)\n"
@@ -210,10 +190,10 @@ int determine_active_comm_size() {
       return -1;
     }
 
-    active = (my_rank >= comm_size) ? 0 : 1;
+    return (my_rank >= comm_size) ? 0 : 1;
   }
 
-  return active;
+  return 1;
 }
 
 void exit_after_lci_cleanup(int exit_code) {
@@ -268,7 +248,7 @@ int main(int argc, char** argv) {
   allocate_devices();
   lci::barrier_x().device(devices[0])();
 
-  if (np_total < MIN_PROCS || np_total > MAX_PROCS) {
+  if (!is_lci::is_process_count_in_range(np_total)) {
     if (my_rank == 0) {
       printf("\n ERROR: number of processes %d not within range %d-%d"
              "\n Exiting program!\n\n",
@@ -304,9 +284,9 @@ int main(int argc, char** argv) {
   is_lci::allocate_fallback_buffers(&redistributor_runtime, comm_size, omp_get_max_threads(), options);
 
   is_lci::generate_keys(key_array, num_keys, static_cast<KeyRank>(MAX_KEY),
-                        is_lci::find_my_seed(my_rank, comm_size, 4 * static_cast<long>(TOTAL_KEYS) * MIN_PROCS,
-                                             314159265.00, 1220703125.00),
-                        1220703125.00);
+                        is_lci::find_my_seed(my_rank, comm_size, is_lci::compute_total_random_numbers(),
+                                             is_lci::NAS_RANDOM_SEED, is_lci::NAS_RANDOM_MULTIPLIER),
+                        is_lci::NAS_RANDOM_MULTIPLIER);
 
   is_lci::initialize_redistributor(&redistributor_runtime, options);
   lci::barrier_x().device(devices[0])();
