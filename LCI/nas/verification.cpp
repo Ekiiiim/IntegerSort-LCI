@@ -16,30 +16,42 @@
 namespace is_lci {
 namespace {
 
-int S_test_index_array[TEST_ARRAY_SIZE] = {48427, 17148, 23627, 62548, 4431};
-int S_test_rank_array[TEST_ARRAY_SIZE] = {0, 18, 346, 64917, 65463};
+struct VerificationData {
+  KeyRank test_index[TEST_ARRAY_SIZE];
+  KeyRank test_rank[TEST_ARRAY_SIZE];
+};
 
-int W_test_index_array[TEST_ARRAY_SIZE] = {357773, 934767, 875723, 898999, 404505};
-int W_test_rank_array[TEST_ARRAY_SIZE] = {1249, 11698, 1039987, 1043896, 1048018};
+struct PartialVerificationResult {
+  bool checked;
+  bool passed;
+  int test_id;
+  KeyValue key;
+  KeyRank computed_rank;
+  KeyRank expected_rank;
+};
 
-int A_test_index_array[TEST_ARRAY_SIZE] = {2112377, 662041, 5336171, 3642833, 4250760};
-int A_test_rank_array[TEST_ARRAY_SIZE] = {104, 17523, 123928, 8288932, 8388264};
+const int S_test_index_array[TEST_ARRAY_SIZE] = {48427, 17148, 23627, 62548, 4431};
+const int S_test_rank_array[TEST_ARRAY_SIZE] = {0, 18, 346, 64917, 65463};
 
-int B_test_index_array[TEST_ARRAY_SIZE] = {41869, 812306, 5102857, 18232239, 26860214};
-int B_test_rank_array[TEST_ARRAY_SIZE] = {33422937, 10244, 59149, 33135281, 99};
+const int W_test_index_array[TEST_ARRAY_SIZE] = {357773, 934767, 875723, 898999, 404505};
+const int W_test_rank_array[TEST_ARRAY_SIZE] = {1249, 11698, 1039987, 1043896, 1048018};
 
-int C_test_index_array[TEST_ARRAY_SIZE] = {44172927, 72999161, 74326391, 129606274, 21736814};
-int C_test_rank_array[TEST_ARRAY_SIZE] = {61147, 882988, 266290, 133997595, 133525895};
+const int A_test_index_array[TEST_ARRAY_SIZE] = {2112377, 662041, 5336171, 3642833, 4250760};
+const int A_test_rank_array[TEST_ARRAY_SIZE] = {104, 17523, 123928, 8288932, 8388264};
 
-long D_test_index_array[TEST_ARRAY_SIZE] = {1317351170, 995930646, 1157283250, 1503301535, 1453734525};
-long D_test_rank_array[TEST_ARRAY_SIZE] = {1, 36538729, 1978098519, 2145192618, 2147425337};
+const int B_test_index_array[TEST_ARRAY_SIZE] = {41869, 812306, 5102857, 18232239, 26860214};
+const int B_test_rank_array[TEST_ARRAY_SIZE] = {33422937, 10244, 59149, 33135281, 99};
 
-long E_test_index_array[TEST_ARRAY_SIZE] = {21492309536L, 24606226181L, 12608530949L, 4065943607L, 3324513396L};
-long E_test_rank_array[TEST_ARRAY_SIZE] = {3L, 27580354L, 3248475153L, 30048754302L, 31485259697L};
+const int C_test_index_array[TEST_ARRAY_SIZE] = {44172927, 72999161, 74326391, 129606274, 21736814};
+const int C_test_rank_array[TEST_ARRAY_SIZE] = {61147, 882988, 266290, 133997595, 133525895};
 
-} // namespace
+const long D_test_index_array[TEST_ARRAY_SIZE] = {1317351170, 995930646, 1157283250, 1503301535, 1453734525};
+const long D_test_rank_array[TEST_ARRAY_SIZE] = {1, 36538729, 1978098519, 2145192618, 2147425337};
 
-static KeyRank adjusted_test_rank(int iteration, int test_id, KeyRank base_rank) {
+const long E_test_index_array[TEST_ARRAY_SIZE] = {21492309536L, 24606226181L, 12608530949L, 4065943607L, 3324513396L};
+const long E_test_rank_array[TEST_ARRAY_SIZE] = {3L, 27580354L, 3248475153L, 30048754302L, 31485259697L};
+
+KeyRank adjusted_test_rank(int iteration, int test_id, KeyRank base_rank) {
   KeyRank test_rank = base_rank;
 
   switch (CLASS) {
@@ -80,49 +92,46 @@ static KeyRank adjusted_test_rank(int iteration, int test_id, KeyRank base_rank)
   return test_rank;
 }
 
-void initialize_verification_data(VerificationData* verification) {
+VerificationData make_verification_data() {
+  VerificationData verification{};
   for (int i = 0; i < TEST_ARRAY_SIZE; i++) {
     switch (CLASS) {
     case 'S':
-      verification->test_index[i] = S_test_index_array[i];
-      verification->test_rank[i] = S_test_rank_array[i];
+      verification.test_index[i] = S_test_index_array[i];
+      verification.test_rank[i] = S_test_rank_array[i];
       break;
     case 'A':
-      verification->test_index[i] = A_test_index_array[i];
-      verification->test_rank[i] = A_test_rank_array[i];
+      verification.test_index[i] = A_test_index_array[i];
+      verification.test_rank[i] = A_test_rank_array[i];
       break;
     case 'W':
-      verification->test_index[i] = W_test_index_array[i];
-      verification->test_rank[i] = W_test_rank_array[i];
+      verification.test_index[i] = W_test_index_array[i];
+      verification.test_rank[i] = W_test_rank_array[i];
       break;
     case 'B':
-      verification->test_index[i] = B_test_index_array[i];
-      verification->test_rank[i] = B_test_rank_array[i];
+      verification.test_index[i] = B_test_index_array[i];
+      verification.test_rank[i] = B_test_rank_array[i];
       break;
     case 'C':
-      verification->test_index[i] = C_test_index_array[i];
-      verification->test_rank[i] = C_test_rank_array[i];
+      verification.test_index[i] = C_test_index_array[i];
+      verification.test_rank[i] = C_test_rank_array[i];
       break;
     case 'D':
-      verification->test_index[i] = D_test_index_array[i];
-      verification->test_rank[i] = D_test_rank_array[i];
+      verification.test_index[i] = D_test_index_array[i];
+      verification.test_rank[i] = D_test_rank_array[i];
       break;
     case 'E':
-      verification->test_index[i] = E_test_index_array[i];
-      verification->test_rank[i] = E_test_rank_array[i];
+      verification.test_index[i] = E_test_index_array[i];
+      verification.test_rank[i] = E_test_rank_array[i];
       break;
     }
   }
+  return verification;
 }
 
-void capture_partial_verification_keys(const KeyValue* keys, KeyCount local_key_count, int my_rank,
-                                       const VerificationData& verification, KeyCount* local_bucket_counts) {
-  for (int test_id = 0; test_id < TEST_ARRAY_SIZE; test_id++) {
-    if ((verification.test_index[test_id] / local_key_count) == my_rank) {
-      KeyCount local_index = static_cast<KeyCount>(verification.test_index[test_id] % local_key_count);
-      local_bucket_counts[NUM_BUCKETS + test_id] = keys[local_index];
-    }
-  }
+const VerificationData& nas_verification_data() {
+  static const VerificationData verification = make_verification_data();
+  return verification;
 }
 
 PartialVerificationResult check_partial_verification_key(int iteration, int test_id, KeyValue min_key_value,
@@ -145,9 +154,23 @@ PartialVerificationResult check_partial_verification_key(int iteration, int test
   return result;
 }
 
+} // namespace
+
+void capture_partial_verification_keys(const KeyValue* keys, KeyCount local_key_count, int my_rank,
+                                       KeyCount* local_bucket_counts) {
+  const VerificationData& verification = nas_verification_data();
+  for (int test_id = 0; test_id < TEST_ARRAY_SIZE; test_id++) {
+    if ((verification.test_index[test_id] / local_key_count) == my_rank) {
+      KeyCount local_index = static_cast<KeyCount>(verification.test_index[test_id] % local_key_count);
+      local_bucket_counts[NUM_BUCKETS + test_id] = keys[local_index];
+    }
+  }
+}
+
 void verify_partial_keys(int iteration, KeyValue min_key_value, KeyValue max_key_value, KeyRank lesser_key_count,
-                         const KeyRank* cumulative_by_key, const KeyCount* bucket_size_totals,
-                         const VerificationData& verification, int my_rank, int* passed_verification) {
+                         const KeyRank* cumulative_by_key, const KeyCount* bucket_size_totals, int my_rank,
+                         int* passed_verification) {
+  const VerificationData& verification = nas_verification_data();
   for (int i = 0; i < TEST_ARRAY_SIZE; i++) {
     PartialVerificationResult result =
         check_partial_verification_key(iteration, i, min_key_value, max_key_value, lesser_key_count, cumulative_by_key,

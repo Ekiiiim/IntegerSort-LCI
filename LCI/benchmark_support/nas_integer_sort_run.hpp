@@ -60,7 +60,6 @@ private:
   double max_time_ = 0.0;
   bool redistributor_initialized_ = false;
 
-  VerificationData verification_{};
   FullVerifySnapshot final_snapshot_{};
   RedistributorRuntime redistributor_runtime_{};
   BucketPlan current_bucket_plan_{};

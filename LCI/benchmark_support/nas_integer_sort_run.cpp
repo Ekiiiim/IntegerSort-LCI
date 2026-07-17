@@ -43,8 +43,6 @@ bool NasIntegerSortRun::initialize() {
     return false;
   }
 
-  initialize_verification_data(&verification_);
-
   int timeron = 0;
   if (runtime_.rank() == 0) {
     use_upacket_ = read_use_upacket_flag();
@@ -116,7 +114,7 @@ void NasIntegerSortRun::apply_nas_key_changes() {
 void NasIntegerSortRun::organize_keys_into_buckets() {
   workspace().clear_bucket_metadata();
 
-  capture_partial_verification_keys(workspace().keys(), workspace().local_key_count(), runtime_.rank(), verification_,
+  capture_partial_verification_keys(workspace().keys(), workspace().local_key_count(), runtime_.rank(),
                                     workspace().local_bucket_counts());
 
   int bucket_shift = MAX_KEY_LOG_2 - NUM_BUCKETS_LOG_2;
@@ -179,7 +177,7 @@ void NasIntegerSortRun::verify_partial_ranking() {
   verify_partial_keys(current_iteration_, current_bucket_plan_.min_key_value, current_bucket_plan_.max_key_value,
                       current_bucket_plan_.lesser_key_count,
                       workspace().cumulative_by_key(current_bucket_plan_.min_key_value),
-                      workspace().global_bucket_counts(), verification_, runtime_.rank(), &passed_verification_);
+                      workspace().global_bucket_counts(), runtime_.rank(), &passed_verification_);
 
   timer_stop_if_enabled(T_RANK);
 }
