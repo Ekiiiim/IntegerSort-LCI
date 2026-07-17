@@ -58,7 +58,7 @@ foreach(CLASS ${NPB_CLASSES})
     integer_sort/ranking.cpp
     integer_sort/workspace.cpp
     nas/key_generation.cpp
-    nas/reporting_rules.cpp
+    nas/reporting.cpp
     nas/run_rules.cpp
     nas/verification.cpp
     runtime/lci_runtime.cpp)

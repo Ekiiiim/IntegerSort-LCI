@@ -18,7 +18,7 @@ communication, and the support code needed to run the NPB IS executable:
   verify.
 - `LCI/nas/`: NAS/NPB IS benchmark contract extracted from the MPI baseline.
   It contains benchmark sizes, input generation, verification,
-  run-size rules, and result-reporting formulas, but no LCI communication code.
+  run-size rules, and result printing/reporting, but no LCI communication code.
 - `LCI/integer_sort/`: reusable integer-sort storage and stages: local bucket
   counting, bucket ownership planning, local rank prefix sums, and workspace
   ownership.
@@ -44,7 +44,7 @@ LCI/nas/
   run_rules.*               NAS process-count, buffer-size, and random-stream rules
   timers.*                  NAS timer IDs, wrappers, and summary logic
   verification.*            NAS test cases plus partial/full verification rules
-  reporting_rules.*         NAS verification-count and MOPS formulas
+  reporting.*               NAS initial/final printout and result formulas
 LCI/runtime/
   lci_runtime.*             LCI init/finalize, device pool, and collective wrappers
 LCI/integer_sort/
@@ -57,13 +57,13 @@ LCI/communication/
   profiling/                optional all-to-all redistribution profiling
 LCI/benchmark_support/
   nas_integer_sort_run.*    high-level NAS IS run and per-step algorithm methods
-  results.*                 initial status and final NPB result printing
+  results.*                 LCI output wrapper around NAS reporting
   run_options.*             LCI-specific environment flags
 ```
 
 | Paper stage | Code interface | Responsibility |
 | --- | --- | --- |
-| NAS benchmark contract | `LCI/nas/` | Define NAS class constants, input generation, verification, run-size rules, and reporting formulas from the MPI IS baseline. |
+| NAS benchmark contract | `LCI/nas/` | Define NAS class constants, input generation, verification, run-size rules, and result printing/reporting from the MPI IS baseline. |
 | Shared types | `LCI/types.hpp` | Define `KeyValue` for key values, `KeyCount` for local/bucket/frequency counts, and `KeyRank` for cumulative/global key ranks. |
 | Executable support | `LCI/benchmark_support/nas_integer_sort_run.hpp` | Expose readable per-step methods used by `LCI/is.cpp` while hiding timers, verification counters, and LCI glue. |
 | LCI runtime | `LCI/runtime/lci_runtime.hpp::LciRuntime` | Own LCI initialization, device allocation, barriers, broadcasts, and reductions. |
