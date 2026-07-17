@@ -1,6 +1,6 @@
 #include "benchmark_support/nas_integer_sort_run.hpp"
 
-#include "benchmark_support/benchmark_timers.hpp"
+#include "nas/timers.hpp"
 #include "benchmark_support/results.hpp"
 #include "benchmark_support/run_options.hpp"
 #include "benchmark_support/verification.hpp"

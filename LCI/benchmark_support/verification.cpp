@@ -7,7 +7,7 @@
 
 #include "benchmark_support/verification.hpp"
 
-#include "benchmark_support/benchmark_timers.hpp"
+#include "nas/timers.hpp"
 #include "nas/verification_rules.hpp"
 
 #include <omp.h>

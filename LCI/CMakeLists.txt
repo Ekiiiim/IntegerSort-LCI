@@ -47,7 +47,7 @@ foreach(CLASS ${NPB_CLASSES})
 
   add_executable(${TARGET_NAME}
     is.cpp
-    benchmark_support/benchmark_timers.cpp
+    nas/timers.cpp
     benchmark_support/nas_integer_sort_run.cpp
     benchmark_support/results.cpp
     benchmark_support/run_options.cpp
@@ -61,7 +61,6 @@ foreach(CLASS ${NPB_CLASSES})
     nas/key_generation.cpp
     nas/reporting_rules.cpp
     nas/run_rules.cpp
-    nas/timer_rules.cpp
     nas/verification_cases.cpp
     nas/verification_rules.cpp
     runtime/lci_runtime.cpp)
