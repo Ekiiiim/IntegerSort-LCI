@@ -1,8 +1,16 @@
 /*************************************************************************
- * NAS Parallel Benchmarks IS verification.
+ * NAS benchmark provenance
  *
- * The partial-verification tables, rank-adjustment rules, and partial/full
- * verification checks are split out from the NPB 3.4 MPI IS implementation.
+ * Source logic: NPB 3.4 MPI IS partial-verification tables, rank-adjustment
+ * rules, partial verification, and full verification.
+ *
+ * Adapted without changing the benchmark logic:
+ * - keeps NAS verification cases internal to this module instead of storing
+ *   them in the benchmark driver;
+ * - consumes caller-owned key, bucket, histogram, and rank buffers instead of
+ *   NAS global arrays;
+ * - uses the LCI point-to-point API for the full-verify neighbor key exchange
+ *   while preserving the same ordering checks.
  *************************************************************************/
 
 #include "nas/verification.hpp"

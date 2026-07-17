@@ -1,8 +1,15 @@
 /*************************************************************************
- * NAS Parallel Benchmarks IS input generation.
+ * NAS benchmark provenance
  *
- * These routines preserve the baseline NPB randlc/find_my_seed/create_seq
- * behavior while parameterizing the destination key buffer for the LCI driver.
+ * Source logic: NPB 3.4 MPI IS randlc, find_my_seed, and create_seq input
+ * generation.
+ *
+ * Adapted without changing the benchmark logic:
+ * - writes generated keys into a caller-provided buffer instead of the NAS
+ *   global key_array;
+ * - takes local counts, max key, seed, and multiplier as parameters so the
+ *   LCI driver owns run state;
+ * - uses the project KeyValue/KeyCount/KeyRank aliases for the NAS types.
  *************************************************************************/
 
 #include "nas/key_generation.hpp"

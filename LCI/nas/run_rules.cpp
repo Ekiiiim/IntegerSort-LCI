@@ -1,3 +1,17 @@
+/*************************************************************************
+ * NAS benchmark provenance
+ *
+ * Source logic: NPB 3.4 MPI IS process-count rules, power-of-two active
+ * communicator selection, work-buffer sizing, random-stream length, and
+ * per-iteration key changes.
+ *
+ * Adapted without changing the benchmark logic:
+ * - splits the main-program checks and formulas into small named helpers;
+ * - lets the LCI driver perform broadcast/exit behavior instead of calling
+ *   MPI_Bcast, MPI_Abort, or MPI_Comm_split here;
+ * - uses the project KeyValue/KeyCount aliases for the NAS integer types.
+ *************************************************************************/
+
 #include "nas/run_rules.hpp"
 
 #include <cstring>

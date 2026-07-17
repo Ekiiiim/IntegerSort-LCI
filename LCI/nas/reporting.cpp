@@ -1,3 +1,16 @@
+/*************************************************************************
+ * NAS benchmark provenance
+ *
+ * Source logic: NPB 3.4 MPI IS initial benchmark printout, final
+ * c_print_results call, verification-count rule, and MOPS formula.
+ *
+ * Adapted without changing the benchmark logic:
+ * - exposes initial and final reporting as callable functions;
+ * - receives active and total rank counts from the LCI driver, matching the
+ *   NAS comm_size and np_total roles;
+ * - keeps LCI-only option output outside this file in benchmark_support.
+ *************************************************************************/
+
 #include "nas/reporting.hpp"
 
 #include "nas/problem_config.hpp"

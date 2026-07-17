@@ -1,3 +1,18 @@
+/*************************************************************************
+ * NAS benchmark provenance
+ *
+ * Source logic: NPB 3.4 MPI IS timer ids, timer.flag handling, total timer,
+ * optional rank/communication/verification timers, and min/max/average timer
+ * summary.
+ *
+ * Adapted without changing the benchmark logic:
+ * - stores the timer-enabled state inside this module instead of using the
+ *   NAS global timeron variable and TIMER_START/TIMER_STOP macros;
+ * - keeps the NAS c_timers backend and timer labels;
+ * - uses LCI reductions instead of MPI_Reduce to compute the same timer
+ *   summary values.
+ *************************************************************************/
+
 #include "nas/timers.hpp"
 
 #include "c_timers.h"
