@@ -1,3 +1,9 @@
 build/
+build-*/
 .vscode/
 vscode-build/
+.DS_Store
+.clang-format
+.agents/
+.codex/
+.superpowers/
