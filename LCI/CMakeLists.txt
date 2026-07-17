@@ -51,7 +51,6 @@ foreach(CLASS ${NPB_CLASSES})
     benchmark_support/nas_integer_sort_run.cpp
     benchmark_support/results.cpp
     benchmark_support/run_options.cpp
-    benchmark_support/verification.cpp
     communication/profiling/a2a_thread_profile.cpp
     communication/lci_redistributor.cpp
     communication/reductions.cpp

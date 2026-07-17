@@ -44,7 +44,7 @@ LCI/nas/
   run_rules.*               NAS process-count, buffer-size, and random-stream rules
   timers.*                  NAS timer IDs, wrappers, and summary logic
   verification_cases.*      NAS test-index/test-rank tables and rank adjustments
-  verification_rules.*      NAS partial-verification key capture and rank checks
+  verification_rules.*      NAS partial/full verification rules
   reporting_rules.*         NAS verification-count and MOPS formulas
 LCI/runtime/
   lci_runtime.*             LCI init/finalize, device pool, and collective wrappers
@@ -58,7 +58,6 @@ LCI/communication/
   profiling/                optional all-to-all redistribution profiling
 LCI/benchmark_support/
   nas_integer_sort_run.*    high-level NAS IS run and per-step algorithm methods
-  verification.*            LCI full verification and benchmark-side reporting
   results.*                 initial status and final NPB result printing
   run_options.*             LCI-specific environment flags
 ```

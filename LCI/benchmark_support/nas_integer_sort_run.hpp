@@ -1,10 +1,9 @@
 #pragma once
 
-#include "benchmark_support/verification.hpp"
+#include "nas/verification_rules.hpp"
 #include "communication/lci_redistributor.hpp"
 #include "integer_sort/bucket_plan.hpp"
 #include "integer_sort/workspace.hpp"
-#include "nas/verification_cases.hpp"
 #include "runtime/lci_runtime.hpp"
 
 #include <memory>

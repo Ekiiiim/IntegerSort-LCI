@@ -1,15 +1,14 @@
 #include "benchmark_support/nas_integer_sort_run.hpp"
 
-#include "nas/timers.hpp"
 #include "benchmark_support/results.hpp"
 #include "benchmark_support/run_options.hpp"
-#include "benchmark_support/verification.hpp"
 #include "communication/profiling/a2a_thread_profile.hpp"
 #include "communication/reductions.hpp"
 #include "integer_sort/ranking.hpp"
 #include "nas/key_generation.hpp"
 #include "nas/problem_config.hpp"
 #include "nas/run_rules.hpp"
+#include "nas/timers.hpp"
 #include "nas/verification_rules.hpp"
 
 #include "c_timers.h"
