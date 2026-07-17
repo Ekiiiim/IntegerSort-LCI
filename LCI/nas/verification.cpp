@@ -1,10 +1,10 @@
 /*************************************************************************
- * NAS benchmark provenance
+ * Based on NAS benchmark
  *
  * Source logic: NPB 3.4 MPI IS partial-verification tables, rank-adjustment
  * rules, partial verification, and full verification.
  *
- * Adapted without changing the benchmark logic:
+ * LCI adaptations that keep the benchmark logic unchanged:
  * - keeps NAS verification cases internal to this module instead of storing
  *   them in the benchmark driver;
  * - consumes caller-owned key, bucket, histogram, and rank buffers instead of

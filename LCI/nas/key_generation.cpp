@@ -1,10 +1,10 @@
 /*************************************************************************
- * NAS benchmark provenance
+ * Based on NAS benchmark
  *
  * Source logic: NPB 3.4 MPI IS randlc, find_my_seed, and create_seq input
  * generation.
  *
- * Adapted without changing the benchmark logic:
+ * LCI adaptations that keep the benchmark logic unchanged:
  * - writes generated keys into a caller-provided buffer instead of the NAS
  *   global key_array;
  * - takes local counts, max key, seed, and multiplier as parameters so the

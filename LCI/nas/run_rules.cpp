@@ -1,11 +1,11 @@
 /*************************************************************************
- * NAS benchmark provenance
+ * Based on NAS benchmark
  *
  * Source logic: NPB 3.4 MPI IS process-count rules, power-of-two active
  * communicator selection, work-buffer sizing, random-stream length, and
  * per-iteration key changes.
  *
- * Adapted without changing the benchmark logic:
+ * LCI adaptations that keep the benchmark logic unchanged:
  * - splits the main-program checks and formulas into small named helpers;
  * - lets the LCI driver perform broadcast/exit behavior instead of calling
  *   MPI_Bcast, MPI_Abort, or MPI_Comm_split here;

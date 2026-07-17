@@ -47,10 +47,7 @@
 #include "nas/problem_config.hpp"
 #include "runtime/lci_runtime.hpp"
 
-int main(int argc, char** argv) {
-  (void)argc;
-  (void)argv;
-
+int main() {
   is_lci::LciRuntime runtime;
   is_lci::NasIntegerSortRun run(runtime);
   if (!run.initialize()) {
