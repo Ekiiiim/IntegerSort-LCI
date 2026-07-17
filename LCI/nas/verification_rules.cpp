@@ -65,6 +65,7 @@ void full_verify(KeyValue* key_array, const FullVerifySnapshot& snapshot, int my
 
   timer_start_if_enabled(T_VERIFY);
 
+  /*  Now, finally, sort the keys:  */
   KeyCount idx = 0;
   for (KeyRank key = snapshot.min_key_value; key <= snapshot.max_key_value; ++key) {
     KeyCount count = snapshot.frequency_histogram[key].load(std::memory_order_relaxed);
@@ -74,6 +75,7 @@ void full_verify(KeyValue* key_array, const FullVerifySnapshot& snapshot, int my
   }
 
   KeyValue previous_rank_last_key = 0;
+  /*  Send largest key value to next processor  */
   if (my_rank > 0) {
     lci::post_recv_x(my_rank - 1, &previous_rank_last_key, sizeof(KeyValue), 1000, sync)
         .device(devices[0])
@@ -96,11 +98,14 @@ void full_verify(KeyValue* key_array, const FullVerifySnapshot& snapshot, int my
   lci::free_comp(&sync);
   lci::free_comp(&sync_send);
 
+  /*  Confirm that neighbor's greatest key value
+      is not greater than my least key value       */
   KeyCount out_of_order = 0;
   if (my_rank > 0 && snapshot.total_local_keys > 0 && previous_rank_last_key > key_array[0]) {
     out_of_order++;
   }
 
+  /*  Confirm keys correctly sorted: count incorrectly sorted keys, if any */
 #pragma omp parallel for schedule(static) reduction(+ : out_of_order)
   for (KeyCount i = 1; i < snapshot.total_local_keys; i++) {
     if (key_array[i - 1] > key_array[i]) {
