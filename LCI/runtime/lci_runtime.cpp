@@ -9,11 +9,9 @@
 namespace is_lci {
 
 LciRuntime::LciRuntime() {
-  setvbuf(stderr, nullptr, _IONBF, 0);
-
   lci::g_runtime_init_x().alloc_default_device(false)();
   rank_ = lci::get_rank_me();
-  world_size_ = lci::get_rank_n();
+  rank_count_ = lci::get_rank_n();
   max_threads_ = omp_get_max_threads();
   threads_per_device_ = read_threads_per_device();
   allocate_devices();
@@ -29,8 +27,8 @@ int LciRuntime::rank() const {
   return rank_;
 }
 
-int LciRuntime::world_size() const {
-  return world_size_;
+int LciRuntime::rank_count() const {
+  return rank_count_;
 }
 
 int LciRuntime::max_threads() const {
@@ -85,7 +83,7 @@ void LciRuntime::allocate_devices() {
 
   size_t npackets = lci::get_default_packet_pool().get_attr_npackets();
   size_t max_nrecvs_per_device = std::min(npackets / 8 / num_devices, 4096UL);
-  size_t max_nsends_per_device = std::min(npackets / 4 / world_size_ / num_devices, 64UL);
+  size_t max_nsends_per_device = std::min(npackets / 4 / rank_count_ / num_devices, 64UL);
   max_nsends_per_device = std::max(max_nsends_per_device, 4UL);
 
   devices_.reserve(num_devices);

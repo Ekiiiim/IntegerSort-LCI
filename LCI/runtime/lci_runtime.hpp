@@ -18,7 +18,7 @@ public:
   LciRuntime& operator=(const LciRuntime&) = delete;
 
   int rank() const;
-  int world_size() const;
+  int rank_count() const;
   int max_threads() const;
   int threads_per_device() const;
 
@@ -40,7 +40,7 @@ private:
   void free_devices();
 
   int rank_ = 0;
-  int world_size_ = 0;
+  int rank_count_ = 0;
   int max_threads_ = 1;
   int threads_per_device_ = 1;
   std::vector<lci::device_t> devices_;

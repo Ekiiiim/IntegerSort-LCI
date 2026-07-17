@@ -44,6 +44,7 @@ LOW_LEVEL_PATTERNS = [
     r"\bfree_work_arrays\b",
     r"\blci::(?:broadcast|reduce|barrier)_x\b",
     r"\bg_runtime_(?:init|fina)",
+    r"\bsetvbuf\s*\(",
     r"\bmalloc\s*\(",
     r"\bfree\s*\(",
 ]

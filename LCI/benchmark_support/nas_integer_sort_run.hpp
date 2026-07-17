@@ -43,14 +43,14 @@ public:
   void print_results();
 
 private:
-  bool determine_active_comm_size();
+  bool determine_active_rank_count();
   RedistributorOptions redistributor_options() const;
   IntegerSortWorkspace& workspace();
   const IntegerSortWorkspace& workspace() const;
   void run_current_iteration_pipeline();
 
   LciRuntime& runtime_;
-  int comm_size_ = 0;
+  int active_rank_count_ = 0;
   int exit_code_ = 0;
   int current_iteration_ = 0;
   int timeron_ = 0;

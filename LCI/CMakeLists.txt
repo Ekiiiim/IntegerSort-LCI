@@ -47,6 +47,7 @@ foreach(CLASS ${NPB_CLASSES})
 
   add_executable(${TARGET_NAME}
     is.cpp
+    benchmark_support/benchmark_setup.cpp
     benchmark_support/benchmark_timers.cpp
     benchmark_support/nas_integer_sort_run.cpp
     benchmark_support/results.cpp

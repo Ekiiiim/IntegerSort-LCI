@@ -30,17 +30,17 @@ NasIntegerSortRun::~NasIntegerSortRun() {
 }
 
 bool NasIntegerSortRun::initialize() {
-  if (!is_process_count_in_range(runtime_.world_size())) {
+  if (!is_process_count_in_range(runtime_.rank_count())) {
     if (runtime_.rank() == 0) {
       printf("\n ERROR: number of processes %d not within range %d-%d"
              "\n Exiting program!\n\n",
-             runtime_.world_size(), MIN_PROCS, MAX_PROCS);
+             runtime_.rank_count(), MIN_PROCS, MAX_PROCS);
     }
     exit_code_ = 1;
     return false;
   }
 
-  if (!determine_active_comm_size()) {
+  if (!determine_active_rank_count()) {
     return false;
   }
 
@@ -54,17 +54,17 @@ bool NasIntegerSortRun::initialize() {
   runtime_.broadcast_int(&use_upacket_, 0);
   runtime_.broadcast_int(&use_loopback_, 0);
   runtime_.broadcast_int(&timeron_, 0);
-  print_initial_status(runtime_.rank(), runtime_.world_size(), comm_size_, use_upacket_, use_loopback_);
+  print_initial_status(runtime_.rank(), runtime_.rank_count(), active_rank_count_, use_upacket_, use_loopback_);
 
   clear_timers();
 
-  KeyCount local_key_count = compute_local_key_count(comm_size_);
-  KeyCount work_buffer_size = compute_work_buffer_size(comm_size_, local_key_count);
+  KeyCount local_key_count = compute_local_key_count(active_rank_count_);
+  KeyCount work_buffer_size = compute_work_buffer_size(active_rank_count_, local_key_count);
   workspace_ = std::make_unique<IntegerSortWorkspace>(local_key_count, work_buffer_size, NUM_BUCKETS + TEST_ARRAY_SIZE);
 
   message_batch_size_ = lci::get_max_bcopy_size() / sizeof(KeyValue) - 1;
   RedistributorOptions options = redistributor_options();
-  allocate_fallback_buffers(&redistributor_runtime_, comm_size_, runtime_.max_threads(), options);
+  allocate_fallback_buffers(&redistributor_runtime_, active_rank_count_, runtime_.max_threads(), options);
   initialize_redistributor(&redistributor_runtime_, options);
   redistributor_initialized_ = true;
 
@@ -76,10 +76,10 @@ int NasIntegerSortRun::exit_code() const {
 }
 
 void NasIntegerSortRun::generate_keys() {
-  is_lci::generate_keys(
-      workspace().keys(), workspace().local_key_count(), static_cast<KeyRank>(MAX_KEY),
-      find_my_seed(runtime_.rank(), comm_size_, compute_total_random_numbers(), NAS_RANDOM_SEED, NAS_RANDOM_MULTIPLIER),
-      NAS_RANDOM_MULTIPLIER);
+  is_lci::generate_keys(workspace().keys(), workspace().local_key_count(), static_cast<KeyRank>(MAX_KEY),
+                        find_my_seed(runtime_.rank(), active_rank_count_, compute_total_random_numbers(),
+                                     NAS_RANDOM_SEED, NAS_RANDOM_MULTIPLIER),
+                        NAS_RANDOM_MULTIPLIER);
   runtime_.barrier();
 }
 
@@ -147,8 +147,8 @@ void NasIntegerSortRun::assign_buckets_to_processes() {
 
   current_bucket_plan_ = build_bucket_plan(workspace().local_bucket_counts(), workspace().global_bucket_counts(),
                                            workspace().bucket_to_rank(), workspace().first_bucket_by_rank(),
-                                           workspace().last_bucket_by_rank(), comm_size_, runtime_.rank(), NUM_BUCKETS,
-                                           bucket_shift, workspace().local_key_count());
+                                           workspace().last_bucket_by_rank(), active_rank_count_, runtime_.rank(),
+                                           NUM_BUCKETS, bucket_shift, workspace().local_key_count());
 
   workspace().clear_frequency_range(current_bucket_plan_.min_key_value, current_bucket_plan_.max_key_value);
   reset_redistributor_iteration(&redistributor_runtime_,
@@ -168,7 +168,7 @@ void NasIntegerSortRun::redistribute_keys_with_lci() {
   begin_thread_local_alltoall_timers();
 
   redistribute_keys(workspace().keys(), workspace().local_key_count(), workspace().bucket_to_rank(), bucket_shift,
-                    current_bucket_plan_.expected_recv_count, comm_size_, runtime_.rank(), runtime_.devices(),
+                    current_bucket_plan_.expected_recv_count, active_rank_count_, runtime_.rank(), runtime_.devices(),
                     redistributor_options(), &redistributor_runtime_);
 
   timer_stop_if_enabled(T_ALLTOALL, timeron_);
@@ -213,7 +213,7 @@ void NasIntegerSortRun::stop_timed_region() {
 }
 
 void NasIntegerSortRun::verify_full_ranking() {
-  full_verify(workspace().keys(), final_snapshot_, runtime_.rank(), comm_size_, runtime_.devices(), timeron_,
+  full_verify(workspace().keys(), final_snapshot_, runtime_.rank(), active_rank_count_, runtime_.devices(), timeron_,
               &passed_verification_);
 
   int local_passed_verification = passed_verification_;
@@ -222,19 +222,19 @@ void NasIntegerSortRun::verify_full_ranking() {
 
 void NasIntegerSortRun::print_results() {
   if (runtime_.rank() == 0) {
-    print_final_results(comm_size_, runtime_.world_size(), max_time_, passed_verification_);
+    print_final_results(active_rank_count_, runtime_.rank_count(), max_time_, passed_verification_);
   }
 
   if (timeron_) {
-    print_timer_summary(comm_size_, runtime_.devices());
+    print_timer_summary(active_rank_count_, runtime_.devices());
   }
 }
 
-bool NasIntegerSortRun::determine_active_comm_size() {
-  comm_size_ = greatest_power_of_two_at_most(runtime_.world_size());
+bool NasIntegerSortRun::determine_active_rank_count() {
+  active_rank_count_ = greatest_power_of_two_at_most(runtime_.rank_count());
 
   int abort_for_non_power_of_two = 1;
-  if (comm_size_ != runtime_.world_size()) {
+  if (active_rank_count_ != runtime_.rank_count()) {
     if (runtime_.rank() == 0) {
       abort_for_non_power_of_two = should_abort_for_non_power_of_two_process_count(getenv("NPB_NPROCS_STRICT")) ? 1 : 0;
     }
@@ -245,13 +245,13 @@ bool NasIntegerSortRun::determine_active_comm_size() {
         fprintf(stderr,
                 "\n ERROR: Number of processes (%d) is not a power of two (%d?)\n"
                 " Exiting program!\n\n",
-                runtime_.world_size(), comm_size_);
+                runtime_.rank_count(), active_rank_count_);
       }
       exit_code_ = 1;
       return false;
     }
 
-    if (runtime_.rank() >= comm_size_) {
+    if (runtime_.rank() >= active_rank_count_) {
       exit_code_ = 0;
       return false;
     }
