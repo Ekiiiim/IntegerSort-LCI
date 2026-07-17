@@ -9,7 +9,7 @@
 #include "nas/problem_config.hpp"
 #include "nas/run_rules.hpp"
 #include "nas/timers.hpp"
-#include "nas/verification_rules.hpp"
+#include "nas/verification.hpp"
 
 #include <lci.hpp>
 

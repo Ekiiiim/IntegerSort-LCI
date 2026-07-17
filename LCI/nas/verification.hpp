@@ -1,6 +1,6 @@
 #pragma once
 
-#include "nas/verification_cases.hpp"
+#include "types.hpp"
 
 #include <lci.hpp>
 
@@ -8,6 +8,11 @@
 #include <vector>
 
 namespace is_lci {
+
+struct VerificationData {
+  KeyRank test_index[TEST_ARRAY_SIZE];
+  KeyRank test_rank[TEST_ARRAY_SIZE];
+};
 
 // NAS IS partial-verification result.
 struct PartialVerificationResult {
@@ -27,6 +32,8 @@ struct FullVerifySnapshot {
   KeyValue max_key_value = 0;
   KeyCount total_local_keys = 0;
 };
+
+void initialize_verification_data(VerificationData* verification);
 
 void capture_partial_verification_keys(const KeyValue* keys, KeyCount local_key_count, int my_rank,
                                        const VerificationData& verification, KeyCount* local_bucket_counts);

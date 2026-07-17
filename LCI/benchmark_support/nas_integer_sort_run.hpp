@@ -1,6 +1,6 @@
 #pragma once
 
-#include "nas/verification_rules.hpp"
+#include "nas/verification.hpp"
 #include "communication/lci_redistributor.hpp"
 #include "integer_sort/bucket_plan.hpp"
 #include "integer_sort/workspace.hpp"

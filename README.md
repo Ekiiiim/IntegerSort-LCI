@@ -17,7 +17,7 @@ communication, and the support code needed to run the NPB IS executable:
   sizes, assign buckets to ranks, redistribute with LCI, compute ranks, and
   verify.
 - `LCI/nas/`: NAS/NPB IS benchmark contract extracted from the MPI baseline.
-  It contains benchmark sizes, input generation, verification cases/rules,
+  It contains benchmark sizes, input generation, verification,
   run-size rules, and result-reporting formulas, but no LCI communication code.
 - `LCI/integer_sort/`: reusable integer-sort storage and stages: local bucket
   counting, bucket ownership planning, local rank prefix sums, and workspace
@@ -43,8 +43,7 @@ LCI/nas/
   key_generation.*          NAS randlc/find_my_seed/create_seq behavior
   run_rules.*               NAS process-count, buffer-size, and random-stream rules
   timers.*                  NAS timer IDs, wrappers, and summary logic
-  verification_cases.*      NAS test-index/test-rank tables and rank adjustments
-  verification_rules.*      NAS partial/full verification rules
+  verification.*            NAS test cases plus partial/full verification rules
   reporting_rules.*         NAS verification-count and MOPS formulas
 LCI/runtime/
   lci_runtime.*             LCI init/finalize, device pool, and collective wrappers
@@ -64,7 +63,7 @@ LCI/benchmark_support/
 
 | Paper stage | Code interface | Responsibility |
 | --- | --- | --- |
-| NAS benchmark contract | `LCI/nas/` | Define NAS class constants, input generation, verification cases/rules, run-size rules, and reporting formulas from the MPI IS baseline. |
+| NAS benchmark contract | `LCI/nas/` | Define NAS class constants, input generation, verification, run-size rules, and reporting formulas from the MPI IS baseline. |
 | Shared types | `LCI/types.hpp` | Define `KeyValue` for key values, `KeyCount` for local/bucket/frequency counts, and `KeyRank` for cumulative/global key ranks. |
 | Executable support | `LCI/benchmark_support/nas_integer_sort_run.hpp` | Expose readable per-step methods used by `LCI/is.cpp` while hiding timers, verification counters, and LCI glue. |
 | LCI runtime | `LCI/runtime/lci_runtime.hpp::LciRuntime` | Own LCI initialization, device allocation, barriers, broadcasts, and reductions. |
