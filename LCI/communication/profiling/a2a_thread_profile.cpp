@@ -191,7 +191,7 @@ void finish_thread_local_alltoall_timers(int iteration, int my_rank, KeyCount lo
     a2atl::print_minmax(iteration, my_rank);
   }
   a2atl::print_per_process(iteration, my_rank, static_cast<long long>(local_key_count), rank_time);
-#pragma omp parallel
+  #pragma omp parallel
   {
     a2atl::reset_thread_local(omp_get_max_threads());
   }

@@ -199,13 +199,13 @@ void redistribute_keys(const KeyValue* keys, KeyCount local_key_count, const int
                        KeyCount expected_recv_count, int comm_size, int my_rank,
                        const std::vector<lci::device_t>& devices, const RedistributorOptions& options,
                        RedistributorRuntime* runtime) {
-#pragma omp parallel
+  #pragma omp parallel
   {
     const int thread_id = omp_get_thread_num();
     std::vector<SendBuffer> send_buffers(comm_size);
     lci::device_t device = devices[thread_id % devices.size()];
 
-#pragma omp for nowait
+    #pragma omp for nowait
     for (KeyCount i = 0; i < local_key_count; i++) {
       const int dest_rank = bucket_to_rank[keys[i] >> bucket_shift];
       send_key_to_processor(keys[i], dest_rank, send_buffers, comm_size, my_rank, device, options, runtime);

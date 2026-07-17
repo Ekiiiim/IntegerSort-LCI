@@ -8,16 +8,16 @@ namespace is_lci {
 
 void count_local_buckets(const KeyValue* keys, KeyCount local_key_count, int bucket_shift,
                          KeyCount* local_bucket_counts, int num_buckets) {
-#pragma omp parallel
+  #pragma omp parallel
   {
     std::vector<KeyCount> bucket_size_private(num_buckets, 0);
 
-#pragma omp for nowait
+    #pragma omp for nowait
     for (KeyCount i = 0; i < local_key_count; i++) {
       bucket_size_private[keys[i] >> bucket_shift]++;
     }
 
-#pragma omp critical
+    #pragma omp critical
     {
       for (int bucket = 0; bucket < num_buckets; ++bucket) {
         local_bucket_counts[bucket] += bucket_size_private[bucket];

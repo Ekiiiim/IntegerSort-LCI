@@ -69,7 +69,7 @@ KeyRank* IntegerSortWorkspace::cumulative_by_key(KeyValue min_key_value) {
 void IntegerSortWorkspace::clear_bucket_metadata() {
   int metadata_size = static_cast<int>(local_bucket_counts_.size());
 
-#pragma omp parallel for schedule(static)
+  #pragma omp parallel for schedule(static)
   for (int i = 0; i < metadata_size; ++i) {
     local_bucket_counts_[i] = 0;
     global_bucket_counts_[i] = 0;
@@ -86,7 +86,7 @@ void IntegerSortWorkspace::clear_frequency_range(KeyValue min_key_value, KeyValu
 
   KeyCount key_range = static_cast<KeyCount>(max_key_value - min_key_value + 1);
 
-#pragma omp parallel for schedule(static)
+  #pragma omp parallel for schedule(static)
   for (KeyCount i = 0; i < key_range; ++i) {
     frequency_storage_[i].store(0, std::memory_order_relaxed);
     cumulative_storage_[static_cast<size_t>(i)] = 0;

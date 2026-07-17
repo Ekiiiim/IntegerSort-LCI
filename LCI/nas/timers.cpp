@@ -91,7 +91,7 @@ bool timer_enabled() {
 }
 
 void clear_timers() {
-#pragma omp parallel for schedule(static)
+  #pragma omp parallel for schedule(static)
   for (int i = 1; i <= T_LAST; i++) {
     timer_clear(i);
   }
@@ -129,7 +129,7 @@ void timer_stop_if_enabled(int timer_id) {
 void print_timer_summary(int comm_size, const std::vector<lci::device_t>& devices) {
   double t1[T_LAST + 1], tmin[T_LAST + 1], tsum[T_LAST + 1], tmax[T_LAST + 1];
 
-#pragma omp parallel for schedule(static)
+  #pragma omp parallel for schedule(static)
   for (int i = 0; i <= T_LAST; i++) {
     t1[i] = timer_read(i);
   }
