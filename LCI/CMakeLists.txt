@@ -61,6 +61,7 @@ foreach(CLASS ${NPB_CLASSES})
     nas/key_generation.cpp
     nas/reporting_rules.cpp
     nas/run_rules.cpp
+    nas/timer_rules.cpp
     nas/verification_cases.cpp
     nas/verification_rules.cpp
     runtime/lci_runtime.cpp)

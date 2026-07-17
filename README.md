@@ -42,6 +42,7 @@ LCI/nas/
   problem_config.hpp        NPB IS class sizes and constants
   key_generation.*          NAS randlc/find_my_seed/create_seq behavior
   run_rules.*               NAS process-count, buffer-size, and random-stream rules
+  timer_rules.*             NAS timer IDs and output labels
   verification_cases.*      NAS test-index/test-rank tables and rank adjustments
   verification_rules.*      NAS partial-verification key capture and rank checks
   reporting_rules.*         NAS verification-count and MOPS formulas
@@ -57,7 +58,7 @@ LCI/communication/
   profiling/                optional all-to-all redistribution profiling
 LCI/benchmark_support/
   nas_integer_sort_run.*    high-level NAS IS run and per-step algorithm methods
-  benchmark_timers.*        NAS-style timer labels and LCI timer summary reduction
+  benchmark_timers.*        timer wrappers and LCI timer summary reduction
   verification.*            LCI full verification and benchmark-side reporting
   results.*                 initial status and final NPB result printing
   run_options.*             LCI-specific environment flags

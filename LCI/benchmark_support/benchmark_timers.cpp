@@ -6,7 +6,6 @@
 #include <omp.h>
 
 #include <cstdio>
-#include <cstring>
 
 namespace is_lci {
 
@@ -47,7 +46,6 @@ void clear_timers() {
 
 void print_timer_summary(int comm_size, const std::vector<lci::device_t>& devices) {
   double t1[T_LAST + 1], tmin[T_LAST + 1], tsum[T_LAST + 1], tmax[T_LAST + 1];
-  char t_recs[T_LAST + 1][9];
 
 #pragma omp parallel for schedule(static)
   for (int i = 0; i <= T_LAST; i++) {
@@ -59,18 +57,9 @@ void print_timer_summary(int comm_size, const std::vector<lci::device_t>& device
   lci::reduce_x(t1, tmax, T_LAST + 1, sizeof(double), max_op, 0).device(devices[0])();
 
   if (lci::get_rank_me() == 0) {
-    strcpy(t_recs[T_TOTAL], "total");
-    strcpy(t_recs[T_RANK], "rcomp");
-    strcpy(t_recs[T_RCOMM], "rcomm");
-    strcpy(t_recs[T_VERIFY], "verify");
-    strcpy(t_recs[T_ALLTOALL], "atallv");
-    strcpy(t_recs[T_RANK_1], "rcomp1");
-    strcpy(t_recs[T_RANK_2], "rcomp2");
-    strcpy(t_recs[T_RANK_3], "rcomp3");
-    strcpy(t_recs[T_RANK_1_1], "rcomp1.1");
     printf(" nprocs = %6d          minimum     maximum     average\n", comm_size);
     for (int i = 0; i <= T_LAST; i++) {
-      printf(" timer %2d (%-8s):  %10.4f  %10.4f  %10.4f\n", i + 1, t_recs[i], tmin[i], tmax[i],
+      printf(" timer %2d (%-8s):  %10.4f  %10.4f  %10.4f\n", i + 1, timer_label(i), tmin[i], tmax[i],
              tsum[i] / static_cast<double>(comm_size));
     }
     printf("\n");

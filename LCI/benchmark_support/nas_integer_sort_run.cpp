@@ -111,7 +111,6 @@ void NasIntegerSortRun::begin_iteration(int iteration) {
 
 void NasIntegerSortRun::apply_nas_key_changes() {
   timer_start_if_enabled(T_RANK, timeron_);
-  timer_start_if_enabled(T_RANK_1, timeron_);
 
   apply_iteration_key_changes(workspace().keys(), current_iteration_, runtime_.rank());
 }
@@ -123,11 +122,8 @@ void NasIntegerSortRun::organize_keys_into_buckets() {
                                     workspace().local_bucket_counts());
 
   int bucket_shift = MAX_KEY_LOG_2 - NUM_BUCKETS_LOG_2;
-  timer_start_if_enabled(T_RANK_1_1, timeron_);
   count_local_buckets(workspace().keys(), workspace().local_key_count(), bucket_shift,
                       workspace().local_bucket_counts(), NUM_BUCKETS);
-  timer_stop_if_enabled(T_RANK_1_1, timeron_);
-  timer_stop_if_enabled(T_RANK_1, timeron_);
   timer_stop_if_enabled(T_RANK, timeron_);
 }
 
@@ -145,7 +141,6 @@ void NasIntegerSortRun::assign_buckets_to_processes() {
   int bucket_shift = MAX_KEY_LOG_2 - NUM_BUCKETS_LOG_2;
 
   timer_start_if_enabled(T_RANK, timeron_);
-  timer_start_if_enabled(T_RANK_2, timeron_);
 
   current_bucket_plan_ = build_bucket_plan(workspace().local_bucket_counts(), workspace().global_bucket_counts(),
                                            workspace().bucket_to_rank(), workspace().first_bucket_by_rank(),
@@ -158,7 +153,6 @@ void NasIntegerSortRun::assign_buckets_to_processes() {
 
   runtime_.barrier();
 
-  timer_stop_if_enabled(T_RANK_2, timeron_);
   timer_stop_if_enabled(T_RANK, timeron_);
 }
 
@@ -166,20 +160,17 @@ void NasIntegerSortRun::redistribute_keys_with_lci() {
   int bucket_shift = MAX_KEY_LOG_2 - NUM_BUCKETS_LOG_2;
 
   timer_start_if_enabled(T_RCOMM, timeron_);
-  timer_start_if_enabled(T_ALLTOALL, timeron_);
   begin_thread_local_alltoall_timers();
 
   redistribute_keys(workspace().keys(), workspace().local_key_count(), workspace().bucket_to_rank(), bucket_shift,
                     current_bucket_plan_.expected_recv_count, active_rank_count_, runtime_.rank(), runtime_.devices(),
                     redistributor_options(), &redistributor_runtime_);
 
-  timer_stop_if_enabled(T_ALLTOALL, timeron_);
   timer_stop_if_enabled(T_RCOMM, timeron_);
 }
 
 void NasIntegerSortRun::compute_final_ranking() {
   timer_start_if_enabled(T_RANK, timeron_);
-  timer_start_if_enabled(T_RANK_3, timeron_);
 
   compute_local_ranks(workspace().frequency_by_key(current_bucket_plan_.min_key_value),
                       workspace().cumulative_by_key(current_bucket_plan_.min_key_value),
@@ -192,7 +183,6 @@ void NasIntegerSortRun::verify_partial_ranking() {
                       workspace().cumulative_by_key(current_bucket_plan_.min_key_value),
                       workspace().global_bucket_counts(), verification_, runtime_.rank(), &passed_verification_);
 
-  timer_stop_if_enabled(T_RANK_3, timeron_);
   timer_stop_if_enabled(T_RANK, timeron_);
 }
 
