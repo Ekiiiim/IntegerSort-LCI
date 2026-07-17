@@ -1,17 +1,42 @@
 #include "nas/timers.hpp"
 
+#ifndef NO_MTIMERS
 #include "communication/reductions.hpp"
 #include "c_timers.h"
 
 #include <omp.h>
 
 #include <cstdio>
+#endif
 
 namespace is_lci {
 
-namespace {
+#ifdef NO_MTIMERS
 
-const char* timer_label(int timer_id) {
+void timer_start_if_enabled(int timer_id, int timeron) {
+  (void)timer_id;
+  (void)timeron;
+}
+
+void timer_stop_if_enabled(int timer_id, int timeron) {
+  (void)timer_id;
+  (void)timeron;
+}
+
+int check_timer_flag_from_file() {
+  return 0;
+}
+
+void clear_timers() {}
+
+void print_timer_summary(int comm_size, const std::vector<lci::device_t>& devices) {
+  (void)comm_size;
+  (void)devices;
+}
+
+#else
+
+static const char* timer_label(int timer_id) {
   switch (timer_id) {
   case T_TOTAL:
     return "total";
@@ -26,28 +51,16 @@ const char* timer_label(int timer_id) {
   }
 }
 
-} // namespace
-
 void timer_start_if_enabled(int timer_id, int timeron) {
-#ifdef NO_MTIMERS
-  (void)timer_id;
-  (void)timeron;
-#else
   if (timeron) {
     timer_start(timer_id);
   }
-#endif
 }
 
 void timer_stop_if_enabled(int timer_id, int timeron) {
-#ifdef NO_MTIMERS
-  (void)timer_id;
-  (void)timeron;
-#else
   if (timeron) {
     timer_stop(timer_id);
   }
-#endif
 }
 
 int check_timer_flag_from_file() {
@@ -55,12 +68,10 @@ int check_timer_flag_from_file() {
 }
 
 void clear_timers() {
-#ifndef NO_MTIMERS
 #pragma omp parallel for schedule(static)
   for (int i = 1; i <= T_LAST; i++) {
     timer_clear(i);
   }
-#endif
 }
 
 void print_timer_summary(int comm_size, const std::vector<lci::device_t>& devices) {
@@ -84,5 +95,7 @@ void print_timer_summary(int comm_size, const std::vector<lci::device_t>& device
     printf("\n");
   }
 }
+
+#endif
 
 } // namespace is_lci
