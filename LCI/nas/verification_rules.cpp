@@ -59,11 +59,11 @@ void verify_partial_keys(int iteration, KeyValue min_key_value, KeyValue max_key
 }
 
 void full_verify(KeyValue* key_array, const FullVerifySnapshot& snapshot, int my_rank, int comm_size,
-                 const std::vector<lci::device_t>& devices, int timeron, int* passed_verification) {
+                 const std::vector<lci::device_t>& devices, int* passed_verification) {
   lci::comp_t sync = lci::alloc_sync();
   lci::comp_t sync_send = lci::alloc_sync();
 
-  timer_start_if_enabled(T_VERIFY, timeron);
+  timer_start_if_enabled(T_VERIFY);
 
   KeyCount idx = 0;
   for (KeyRank key = snapshot.min_key_value; key <= snapshot.max_key_value; ++key) {
@@ -114,7 +114,7 @@ void full_verify(KeyValue* key_array, const FullVerifySnapshot& snapshot, int my
     (*passed_verification)++;
   }
 
-  timer_stop_if_enabled(T_VERIFY, timeron);
+  timer_stop_if_enabled(T_VERIFY);
 }
 
 } // namespace is_lci

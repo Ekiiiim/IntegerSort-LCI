@@ -53,7 +53,6 @@ private:
   int active_rank_count_ = 0;
   int exit_code_ = 0;
   int current_iteration_ = 0;
-  int timeron_ = 0;
   int use_upacket_ = 0;
   int use_loopback_ = 0;
   int message_batch_size_ = 0;

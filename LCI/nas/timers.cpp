@@ -1,8 +1,9 @@
 #include "nas/timers.hpp"
 
+#include "c_timers.h"
+
 #ifndef NO_MTIMERS
 #include "communication/reductions.hpp"
-#include "c_timers.h"
 
 #include <omp.h>
 
@@ -11,23 +12,49 @@
 
 namespace is_lci {
 
+static int g_timer_enabled = 0;
+
 #ifdef NO_MTIMERS
-
-void timer_start_if_enabled(int timer_id, int timeron) {
-  (void)timer_id;
-  (void)timeron;
-}
-
-void timer_stop_if_enabled(int timer_id, int timeron) {
-  (void)timer_id;
-  (void)timeron;
-}
 
 int check_timer_flag_from_file() {
   return 0;
 }
 
+void set_timer_enabled(int timeron) {
+  (void)timeron;
+  g_timer_enabled = 0;
+}
+
+bool timer_enabled() {
+  return false;
+}
+
 void clear_timers() {}
+
+void start_total_timer() {
+  timer_clear(T_TOTAL);
+  timer_start(T_TOTAL);
+}
+
+void stop_total_timer() {
+  timer_stop(T_TOTAL);
+}
+
+double read_total_timer() {
+  return timer_read(T_TOTAL);
+}
+
+double read_rank_timer() {
+  return 0.0;
+}
+
+void timer_start_if_enabled(int timer_id) {
+  (void)timer_id;
+}
+
+void timer_stop_if_enabled(int timer_id) {
+  (void)timer_id;
+}
 
 void print_timer_summary(int comm_size, const std::vector<lci::device_t>& devices) {
   (void)comm_size;
@@ -51,26 +78,51 @@ static const char* timer_label(int timer_id) {
   }
 }
 
-void timer_start_if_enabled(int timer_id, int timeron) {
-  if (timeron) {
-    timer_start(timer_id);
-  }
-}
-
-void timer_stop_if_enabled(int timer_id, int timeron) {
-  if (timeron) {
-    timer_stop(timer_id);
-  }
-}
-
 int check_timer_flag_from_file() {
   return check_timer_flag();
+}
+
+void set_timer_enabled(int timeron) {
+  g_timer_enabled = timeron;
+}
+
+bool timer_enabled() {
+  return g_timer_enabled != 0;
 }
 
 void clear_timers() {
 #pragma omp parallel for schedule(static)
   for (int i = 1; i <= T_LAST; i++) {
     timer_clear(i);
+  }
+}
+
+void start_total_timer() {
+  timer_clear(T_TOTAL);
+  timer_start(T_TOTAL);
+}
+
+void stop_total_timer() {
+  timer_stop(T_TOTAL);
+}
+
+double read_total_timer() {
+  return timer_read(T_TOTAL);
+}
+
+double read_rank_timer() {
+  return timer_read(T_RANK);
+}
+
+void timer_start_if_enabled(int timer_id) {
+  if (timer_enabled()) {
+    timer_start(timer_id);
+  }
+}
+
+void timer_stop_if_enabled(int timer_id) {
+  if (timer_enabled()) {
+    timer_stop(timer_id);
   }
 }
 
