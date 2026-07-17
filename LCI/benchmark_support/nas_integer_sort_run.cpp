@@ -30,6 +30,8 @@ NasIntegerSortRun::~NasIntegerSortRun() {
 }
 
 bool NasIntegerSortRun::initialize() {
+  configure_output();
+
   if (!is_process_count_in_range(runtime_.rank_count())) {
     if (runtime_.rank() == 0) {
       printf("\n ERROR: number of processes %d not within range %d-%d"
@@ -258,6 +260,10 @@ bool NasIntegerSortRun::determine_active_rank_count() {
   }
 
   return true;
+}
+
+void NasIntegerSortRun::configure_output() {
+  setvbuf(stderr, nullptr, _IONBF, 0);
 }
 
 RedistributorOptions NasIntegerSortRun::redistributor_options() const {

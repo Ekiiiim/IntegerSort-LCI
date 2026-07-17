@@ -43,6 +43,7 @@ public:
   void print_results();
 
 private:
+  void configure_output();
   bool determine_active_rank_count();
   RedistributorOptions redistributor_options() const;
   IntegerSortWorkspace& workspace();

@@ -56,7 +56,6 @@ LCI/communication/
   reductions.*              LCI reduction callbacks used by this executable
   profiling/                optional all-to-all redistribution profiling
 LCI/benchmark_support/
-  benchmark_setup.*         executable-level setup such as benchmark output behavior
   nas_integer_sort_run.*    high-level NAS IS run and per-step algorithm methods
   benchmark_timers.*        NAS-style timer labels and LCI timer summary reduction
   verification.*            LCI full verification and benchmark-side reporting

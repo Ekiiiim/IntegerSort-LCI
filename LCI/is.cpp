@@ -43,7 +43,6 @@
  *  benchmark_support/, integer_sort/, communication/, and nas/.
  *************************************************************************/
 
-#include "benchmark_support/benchmark_setup.hpp"
 #include "benchmark_support/nas_integer_sort_run.hpp"
 #include "nas/problem_config.hpp"
 #include "runtime/lci_runtime.hpp"
@@ -51,8 +50,6 @@
 int main(int argc, char** argv) {
   (void)argc;
   (void)argv;
-
-  is_lci::configure_benchmark_output();
 
   is_lci::LciRuntime runtime;
   is_lci::NasIntegerSortRun run(runtime);
