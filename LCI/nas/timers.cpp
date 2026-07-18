@@ -16,6 +16,7 @@
 #include "nas/timers.hpp"
 
 #include "c_timers.h"
+#include "irregular/irregular_runtime.hpp"
 
 #ifndef NO_MTIMERS
 #include "communication/reductions.hpp"
@@ -71,9 +72,9 @@ void timer_stop_if_enabled(int timer_id) {
   (void)timer_id;
 }
 
-void print_timer_summary(int comm_size, const std::vector<lci::device_t>& devices) {
+void print_timer_summary(int comm_size, const lci_irregular::IrregularRuntime& runtime) {
   (void)comm_size;
-  (void)devices;
+  (void)runtime;
 }
 
 #else
@@ -141,7 +142,7 @@ void timer_stop_if_enabled(int timer_id) {
   }
 }
 
-void print_timer_summary(int comm_size, const std::vector<lci::device_t>& devices) {
+void print_timer_summary(int comm_size, const lci_irregular::IrregularRuntime& runtime) {
   double t1[T_LAST + 1], tmin[T_LAST + 1], tsum[T_LAST + 1], tmax[T_LAST + 1];
 
   #pragma omp parallel for schedule(static)
@@ -149,9 +150,9 @@ void print_timer_summary(int comm_size, const std::vector<lci::device_t>& device
     t1[i] = timer_read(i);
   }
 
-  lci::reduce_x(t1, tmin, T_LAST + 1, sizeof(double), min_op, 0).device(devices[0])();
-  lci::reduce_x(t1, tsum, T_LAST + 1, sizeof(double), sum_op_double, 0).device(devices[0])();
-  lci::reduce_x(t1, tmax, T_LAST + 1, sizeof(double), max_op, 0).device(devices[0])();
+  runtime.reduce(t1, tmin, T_LAST + 1, sizeof(double), min_op, 0);
+  runtime.reduce(t1, tsum, T_LAST + 1, sizeof(double), sum_op_double, 0);
+  runtime.reduce(t1, tmax, T_LAST + 1, sizeof(double), max_op, 0);
 
   if (lci::get_rank_me() == 0) {
     printf(" nprocs = %6d          minimum     maximum     average\n", comm_size);

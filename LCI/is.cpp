@@ -39,16 +39,19 @@
  *  Asynchronous BSP (FA-BSP).
  *
  *  This executable is intentionally written as an algorithm script. The
- *  implementation details for each step live under runtime/,
+ *  implementation details for each step live under irregular/,
  *  benchmark_support/, integer_sort/, communication/, and nas/.
  *************************************************************************/
 
 #include "benchmark_support/nas_integer_sort_run.hpp"
+#include "benchmark_support/run_options.hpp"
+#include "irregular/irregular_runtime.hpp"
 #include "nas/problem_config.hpp"
-#include "runtime/lci_runtime.hpp"
 
 int main() {
-  is_lci::LciRuntime runtime;
+  lci_irregular::IrregularRuntimeOptions runtime_options;
+  runtime_options.threads_per_device = is_lci::read_threads_per_device_option();
+  lci_irregular::IrregularRuntime runtime(runtime_options);
   is_lci::NasIntegerSortRun run(runtime);
   if (!run.initialize()) {
     return run.exit_code();

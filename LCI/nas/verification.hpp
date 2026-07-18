@@ -2,10 +2,11 @@
 
 #include "types.hpp"
 
-#include <lci.hpp>
-
 #include <atomic>
-#include <vector>
+
+namespace lci_irregular {
+class IrregularRuntime;
+}
 
 namespace is_lci {
 
@@ -26,6 +27,6 @@ void verify_partial_keys(int iteration, KeyValue min_key_value, KeyValue max_key
                          int* passed_verification);
 
 void full_verify(KeyValue* key_array, const FullVerifySnapshot& snapshot, int my_rank, int comm_size,
-                 const std::vector<lci::device_t>& devices, int* passed_verification);
+                 const lci_irregular::IrregularRuntime& runtime, int* passed_verification);
 
 } // namespace is_lci

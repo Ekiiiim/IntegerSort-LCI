@@ -68,6 +68,49 @@ def main() -> int:
         if re.search(pattern, source):
             failures.append(f"is.cpp still exposes low-level detail matching: {pattern}")
 
+    required_files = [
+        "LCI/irregular/am_exchange_options.hpp",
+        "LCI/irregular/irregular_runtime.hpp",
+        "LCI/irregular/irregular_runtime.cpp",
+        "LCI/irregular/detail/am_exchange.hpp",
+        "LCI/irregular/detail/am_exchange_state.hpp",
+        "LCI/irregular/detail/am_exchange_state.cpp",
+        "LCI/integer_sort/key_redistribution.hpp",
+        "LCI/integer_sort/key_redistribution.cpp",
+    ]
+    for relpath in required_files:
+        if not (ROOT / relpath).exists():
+            failures.append(f"missing reusable irregular interface file: {relpath}")
+
+    removed_files = [
+        "LCI/runtime/lci_runtime.hpp",
+        "LCI/runtime/lci_runtime.cpp",
+        "LCI/communication/lci_redistributor.hpp",
+        "LCI/communication/lci_redistributor.cpp",
+    ]
+    for relpath in removed_files:
+        if (ROOT / relpath).exists():
+            failures.append(f"old low-level communication boundary still exists: {relpath}")
+
+    if (ROOT / "LCI/integer_sort/key_redistribution.cpp").exists():
+        redistribution_source = (ROOT / "LCI/integer_sort/key_redistribution.cpp").read_text()
+        for required_token in ["bucket_to_rank", "frequency_histogram", "am_exchange_counted"]:
+            if required_token not in redistribution_source:
+                failures.append(f"IS key redistribution wrapper does not contain: {required_token}")
+        for forbidden_token in ["post_am", "get_upacket", "alloc_handler"]:
+            if forbidden_token in redistribution_source:
+                failures.append(f"IS key redistribution wrapper exposes LCI AM detail: {forbidden_token}")
+
+    for forbidden_token in [
+        "communication/lci_redistributor",
+        "runtime/lci_runtime",
+        "RedistributorRuntime",
+        "bucket_to_rank",
+        "frequency_histogram",
+    ]:
+        if forbidden_token in source:
+            failures.append(f"is.cpp exposes implementation detail: {forbidden_token}")
+
     if failures:
         print("LCI interface layout check failed:")
         for failure in failures:

@@ -4,27 +4,23 @@
 #include "benchmark_support/run_options.hpp"
 #include "communication/profiling/a2a_thread_profile.hpp"
 #include "communication/reductions.hpp"
+#include "integer_sort/key_redistribution.hpp"
 #include "integer_sort/ranking.hpp"
+#include "irregular/irregular_runtime.hpp"
 #include "nas/key_generation.hpp"
 #include "nas/problem_config.hpp"
 #include "nas/run_rules.hpp"
 #include "nas/timers.hpp"
 #include "nas/verification.hpp"
 
-#include <lci.hpp>
-
 #include <cstdio>
 #include <cstdlib>
 
 namespace is_lci {
 
-NasIntegerSortRun::NasIntegerSortRun(LciRuntime& runtime) : runtime_(runtime) {}
+NasIntegerSortRun::NasIntegerSortRun(lci_irregular::IrregularRuntime& runtime) : runtime_(runtime) {}
 
-NasIntegerSortRun::~NasIntegerSortRun() {
-  if (redistributor_initialized_) {
-    finalize_redistributor(&redistributor_runtime_);
-  }
-}
+NasIntegerSortRun::~NasIntegerSortRun() = default;
 
 bool NasIntegerSortRun::initialize() {
   configure_output();
@@ -60,12 +56,6 @@ bool NasIntegerSortRun::initialize() {
   KeyCount local_key_count = compute_local_key_count(active_rank_count_);
   KeyCount work_buffer_size = compute_work_buffer_size(active_rank_count_, local_key_count);
   workspace_ = std::make_unique<IntegerSortWorkspace>(local_key_count, work_buffer_size, NUM_BUCKETS + TEST_ARRAY_SIZE);
-
-  message_batch_size_ = lci::get_max_bcopy_size() / sizeof(KeyValue) - 1;
-  RedistributorOptions options = redistributor_options();
-  allocate_fallback_buffers(&redistributor_runtime_, active_rank_count_, runtime_.max_threads(), options);
-  initialize_redistributor(&redistributor_runtime_, options);
-  redistributor_initialized_ = true;
 
   return true;
 }
@@ -144,8 +134,6 @@ void NasIntegerSortRun::assign_buckets_to_processes() {
                                            NUM_BUCKETS, bucket_shift, workspace().local_key_count());
 
   workspace().clear_frequency_range(current_bucket_plan_.min_key_value, current_bucket_plan_.max_key_value);
-  reset_redistributor_iteration(&redistributor_runtime_,
-                                workspace().frequency_by_key(current_bucket_plan_.min_key_value));
 
   runtime_.barrier();
 
@@ -158,9 +146,11 @@ void NasIntegerSortRun::redistribute_keys_with_lci() {
   timer_start_if_enabled(T_RCOMM);
   begin_thread_local_alltoall_timers();
 
-  redistribute_keys(workspace().keys(), workspace().local_key_count(), workspace().bucket_to_rank(), bucket_shift,
-                    current_bucket_plan_.expected_recv_count, active_rank_count_, runtime_.rank(), runtime_.devices(),
-                    redistributor_options(), &redistributor_runtime_);
+  redistribute_keys_with_active_messages(runtime_, workspace().keys(), workspace().local_key_count(),
+                                         workspace().bucket_to_rank(), bucket_shift,
+                                         current_bucket_plan_.expected_recv_count,
+                                         workspace().frequency_by_key(current_bucket_plan_.min_key_value),
+                                         am_exchange_options());
 
   timer_stop_if_enabled(T_RCOMM);
 }
@@ -201,7 +191,7 @@ void NasIntegerSortRun::stop_timed_region() {
 }
 
 void NasIntegerSortRun::verify_full_ranking() {
-  full_verify(workspace().keys(), final_snapshot_, runtime_.rank(), active_rank_count_, runtime_.devices(),
+  full_verify(workspace().keys(), final_snapshot_, runtime_.rank(), active_rank_count_, runtime_,
               &passed_verification_);
 
   int local_passed_verification = passed_verification_;
@@ -214,7 +204,7 @@ void NasIntegerSortRun::print_results() {
   }
 
   if (timer_enabled()) {
-    print_timer_summary(active_rank_count_, runtime_.devices());
+    print_timer_summary(active_rank_count_, runtime_);
   }
 }
 
@@ -252,12 +242,12 @@ void NasIntegerSortRun::configure_output() {
   setvbuf(stderr, nullptr, _IONBF, 0);
 }
 
-RedistributorOptions NasIntegerSortRun::redistributor_options() const {
-  return RedistributorOptions{
-      use_upacket_ == 1,
-      use_loopback_ == 1,
-      message_batch_size_,
-  };
+lci_irregular::AmExchangeOptions NasIntegerSortRun::am_exchange_options() const {
+  lci_irregular::AmExchangeOptions options;
+  options.use_upacket = use_upacket_ == 1;
+  options.use_loopback = use_loopback_ == 1;
+  options.batch_records = 0;
+  return options;
 }
 
 IntegerSortWorkspace& NasIntegerSortRun::workspace() {

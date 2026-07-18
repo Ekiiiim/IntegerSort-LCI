@@ -1,12 +1,15 @@
 #pragma once
 
-#include "nas/verification.hpp"
-#include "communication/lci_redistributor.hpp"
+#include "irregular/am_exchange_options.hpp"
 #include "integer_sort/bucket_plan.hpp"
 #include "integer_sort/workspace.hpp"
-#include "runtime/lci_runtime.hpp"
+#include "nas/verification.hpp"
 
 #include <memory>
+
+namespace lci_irregular {
+class IrregularRuntime;
+}
 
 namespace is_lci {
 
@@ -14,7 +17,7 @@ namespace is_lci {
 // algorithm script; implementation files keep the benchmark and LCI details.
 class NasIntegerSortRun {
 public:
-  explicit NasIntegerSortRun(LciRuntime& runtime);
+  explicit NasIntegerSortRun(lci_irregular::IrregularRuntime& runtime);
   ~NasIntegerSortRun();
 
   NasIntegerSortRun(const NasIntegerSortRun&) = delete;
@@ -44,24 +47,21 @@ public:
 private:
   void configure_output();
   bool determine_active_rank_count();
-  RedistributorOptions redistributor_options() const;
+  lci_irregular::AmExchangeOptions am_exchange_options() const;
   IntegerSortWorkspace& workspace();
   const IntegerSortWorkspace& workspace() const;
   void run_current_iteration_pipeline();
 
-  LciRuntime& runtime_;
+  lci_irregular::IrregularRuntime& runtime_;
   int active_rank_count_ = 0;
   int exit_code_ = 0;
   int current_iteration_ = 0;
   int use_upacket_ = 0;
   int use_loopback_ = 0;
-  int message_batch_size_ = 0;
   int passed_verification_ = 0;
   double max_time_ = 0.0;
-  bool redistributor_initialized_ = false;
 
   FullVerifySnapshot final_snapshot_{};
-  RedistributorRuntime redistributor_runtime_{};
   BucketPlan current_bucket_plan_{};
   std::unique_ptr<IntegerSortWorkspace> workspace_;
 };

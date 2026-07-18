@@ -51,17 +51,18 @@ foreach(CLASS ${NPB_CLASSES})
     benchmark_support/nas_integer_sort_run.cpp
     benchmark_support/results.cpp
     benchmark_support/run_options.cpp
+    irregular/irregular_runtime.cpp
+    irregular/detail/am_exchange_state.cpp
     communication/profiling/a2a_thread_profile.cpp
-    communication/lci_redistributor.cpp
     communication/reductions.cpp
     integer_sort/bucket_plan.cpp
+    integer_sort/key_redistribution.cpp
     integer_sort/ranking.cpp
     integer_sort/workspace.cpp
     nas/key_generation.cpp
     nas/reporting.cpp
     nas/run_rules.cpp
-    nas/verification.cpp
-    runtime/lci_runtime.cpp)
+    nas/verification.cpp)
 
   # Include directories
   target_include_directories(${TARGET_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}

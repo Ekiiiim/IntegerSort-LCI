@@ -1,8 +1,8 @@
 #pragma once
 
-#include <lci.hpp>
-
-#include <vector>
+namespace lci_irregular {
+class IrregularRuntime;
+}
 
 namespace is_lci {
 
@@ -24,6 +24,6 @@ double read_total_timer();
 double read_rank_timer();
 void timer_start_if_enabled(int timer_id);
 void timer_stop_if_enabled(int timer_id);
-void print_timer_summary(int comm_size, const std::vector<lci::device_t>& devices);
+void print_timer_summary(int comm_size, const lci_irregular::IrregularRuntime& runtime);
 
 } // namespace is_lci

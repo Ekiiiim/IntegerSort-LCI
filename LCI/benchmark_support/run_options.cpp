@@ -38,4 +38,13 @@ int read_loopback_flag() {
   return read_bool_env_flag("LOOPBACK", 1);
 }
 
+int read_threads_per_device_option() {
+  const char* env_val = getenv("NUM_THREADS_PER_DEVICE");
+  if (env_val == nullptr) {
+    return 1;
+  }
+
+  return atoi(env_val);
+}
+
 } // namespace is_lci

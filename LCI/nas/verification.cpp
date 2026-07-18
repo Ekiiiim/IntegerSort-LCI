@@ -15,8 +15,10 @@
 
 #include "nas/verification.hpp"
 
+#include "irregular/irregular_runtime.hpp"
 #include "nas/timers.hpp"
 
+#include <lci.hpp>
 #include <omp.h>
 
 #include <cstdio>
@@ -197,7 +199,8 @@ void verify_partial_keys(int iteration, KeyValue min_key_value, KeyValue max_key
 }
 
 void full_verify(KeyValue* key_array, const FullVerifySnapshot& snapshot, int my_rank, int comm_size,
-                 const std::vector<lci::device_t>& devices, int* passed_verification) {
+                 const lci_irregular::IrregularRuntime& runtime, int* passed_verification) {
+  const lci::device_t& control_device = lci_irregular::detail::control_device(runtime);
   lci::comp_t sync = lci::alloc_sync();
   lci::comp_t sync_send = lci::alloc_sync();
 
@@ -216,21 +219,21 @@ void full_verify(KeyValue* key_array, const FullVerifySnapshot& snapshot, int my
   /*  Send largest key value to next processor  */
   if (my_rank > 0) {
     lci::post_recv_x(my_rank - 1, &previous_rank_last_key, sizeof(KeyValue), 1000, sync)
-        .device(devices[0])
+        .device(control_device)
         .allow_done(false)();
   }
   if (my_rank < comm_size - 1) {
     KeyCount last_local_key = (idx == 0) ? idx : (idx - 1);
     while (lci::post_send_x(my_rank + 1, &key_array[last_local_key], sizeof(KeyValue), 1000, sync_send)
-               .device(devices[0])
+               .device(control_device)
                .allow_done(false)()
                .is_retry()) {
-      lci::progress_x().device(devices[0])();
+      lci::progress_x().device(control_device)();
     }
-    lci::sync_wait_x(sync_send, nullptr).device(devices[0])();
+    lci::sync_wait_x(sync_send, nullptr).device(control_device)();
   }
   if (my_rank > 0) {
-    lci::sync_wait_x(sync, nullptr).device(devices[0])();
+    lci::sync_wait_x(sync, nullptr).device(control_device)();
   }
 
   lci::free_comp(&sync);
