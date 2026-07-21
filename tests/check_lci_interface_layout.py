@@ -94,7 +94,7 @@ def main() -> int:
 
     if (ROOT / "LCI/integer_sort/key_redistribution.cpp").exists():
         redistribution_source = (ROOT / "LCI/integer_sort/key_redistribution.cpp").read_text()
-        for required_token in ["bucket_to_rank", "frequency_histogram", "am_exchange_counted"]:
+        for required_token in ["bucket_to_rank", "frequency_histogram", "am_exchange_start", "make_sender"]:
             if required_token not in redistribution_source:
                 failures.append(f"IS key redistribution wrapper does not contain: {required_token}")
         for forbidden_token in ["post_am", "get_upacket", "alloc_handler"]:
@@ -110,6 +110,46 @@ def main() -> int:
     ]:
         if forbidden_token in source:
             failures.append(f"is.cpp exposes implementation detail: {forbidden_token}")
+
+    irregular_paths = [
+        path for path in (ROOT / "LCI" / "irregular").rglob("*") if path.suffix in {".hpp", ".cpp"}
+    ]
+    irregular_source = "\n".join(path.read_text() for path in irregular_paths)
+    for forbidden_pattern in [
+        r"\b_OPENMP\b",
+        r"\bomp_[A-Za-z0-9_]+",
+        r"#pragma\s+omp",
+        r"<omp\.h>",
+        r"max_threads",
+        r"threads_per_device",
+    ]:
+        if re.search(forbidden_pattern, irregular_source):
+            failures.append(f"generic irregular runtime depends on thread-model detail: {forbidden_pattern}")
+
+    for forbidden_token in [
+        "KeyValue",
+        "KeyCount",
+        "bucket",
+        "frequency_histogram",
+        "problem_config",
+        "is_lci",
+    ]:
+        if forbidden_token in irregular_source:
+            failures.append(f"generic irregular runtime exposes IS detail: {forbidden_token}")
+
+    for required_token in [
+        "device_count",
+        "progress",
+        "class AmExchange",
+        "am_exchange_start",
+        "make_sender",
+        "am_send",
+        "flush",
+        "is_done",
+        "wait",
+    ]:
+        if required_token not in irregular_source:
+            failures.append(f"generic irregular runtime is missing public AM API token: {required_token}")
 
     if failures:
         print("LCI interface layout check failed:")

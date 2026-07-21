@@ -50,7 +50,7 @@
 
 int main() {
   lci_irregular::IrregularRuntimeOptions runtime_options;
-  runtime_options.threads_per_device = is_lci::read_threads_per_device_option();
+  runtime_options.device_count = is_lci::read_lci_device_count_option();
   lci_irregular::IrregularRuntime runtime(runtime_options);
   is_lci::NasIntegerSortRun run(runtime);
   if (!run.initialize()) {

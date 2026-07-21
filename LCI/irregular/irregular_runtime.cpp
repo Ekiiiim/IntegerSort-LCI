@@ -1,9 +1,5 @@
 #include "irregular/irregular_runtime.hpp"
 
-#ifdef _OPENMP
-#include <omp.h>
-#endif
-
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
@@ -12,14 +8,6 @@ namespace lci_irregular {
 namespace {
 
 IrregularRuntime* g_active_runtime = nullptr;
-
-int max_openmp_threads() {
-#ifdef _OPENMP
-  return omp_get_max_threads();
-#else
-  return 1;
-#endif
-}
 
 } // namespace
 
@@ -32,17 +20,14 @@ IrregularRuntime::IrregularRuntime(IrregularRuntimeOptions options) {
   lci::g_runtime_init_x().alloc_default_device(false)();
   rank_ = lci::get_rank_me();
   rank_count_ = lci::get_rank_n();
-  max_threads_ = max_openmp_threads();
-  if (options.threads_per_device <= 0 || options.threads_per_device > max_threads_) {
+  if (options.device_count <= 0) {
     if (rank_ == 0) {
-      std::fprintf(stderr, "[Warning] Invalid threads_per_device value %d, using 1 instead\n",
-                   options.threads_per_device);
+      std::fprintf(stderr, "[Warning] Invalid LCI irregular device_count value %d, using 1 instead\n",
+                   options.device_count);
     }
-    options.threads_per_device = 1;
+    options.device_count = 1;
   }
-  threads_per_device_ = options.threads_per_device;
   allocate_devices(options);
-  send_counter_ = lci::alloc_counter();
   am_handler_ = lci::alloc_handler_x(detail::am_handler).zero_copy_am(true)();
   am_rcomp_ = lci::register_rcomp(am_handler_);
   g_active_runtime = this;
@@ -57,9 +42,6 @@ IrregularRuntime::~IrregularRuntime() {
   if (!am_handler_.is_empty()) {
     lci::free_comp(&am_handler_);
   }
-  if (!send_counter_.is_empty()) {
-    lci::free_comp(&send_counter_);
-  }
   free_devices();
   g_active_runtime = nullptr;
   lci::g_runtime_fina();
@@ -73,12 +55,8 @@ int IrregularRuntime::rank_count() const {
   return rank_count_;
 }
 
-int IrregularRuntime::max_threads() const {
-  return max_threads_;
-}
-
-int IrregularRuntime::threads_per_device() const {
-  return threads_per_device_;
+int IrregularRuntime::device_count() const {
+  return static_cast<int>(devices_.size());
 }
 
 const lci::device_t& IrregularRuntime::control_device() const {
@@ -97,9 +75,18 @@ void IrregularRuntime::broadcast_bytes(void* data, size_t bytes, int root) const
   lci::broadcast_x(data, bytes, root).device(control_device())();
 }
 
-void IrregularRuntime::allocate_devices(const IrregularRuntimeOptions& options) {
-  int num_devices = std::max(1, max_threads_ / threads_per_device_);
+void IrregularRuntime::progress() const {
+  for (const auto& device : devices_) {
+    lci::progress_x().device(device)();
+  }
+}
 
+void IrregularRuntime::progress(size_t worker_index) const {
+  lci::progress_x().device(devices_[worker_index % devices_.size()])();
+}
+
+void IrregularRuntime::allocate_devices(const IrregularRuntimeOptions& options) {
+  int num_devices = std::max(1, options.device_count);
   size_t npackets = lci::get_default_packet_pool().get_attr_npackets();
   size_t max_recvs_per_device = options.max_recvs_per_device;
   size_t max_sends_per_device = options.max_sends_per_device;
@@ -114,8 +101,7 @@ void IrregularRuntime::allocate_devices(const IrregularRuntimeOptions& options) 
 
   devices_.reserve(num_devices);
   for (int i = 0; i < num_devices; ++i) {
-    devices_.push_back(
-        lci::alloc_device_x().net_max_sends(max_sends_per_device).net_max_recvs(max_recvs_per_device)());
+    devices_.push_back(lci::alloc_device_x().net_max_sends(max_sends_per_device).net_max_recvs(max_recvs_per_device)());
   }
 }
 
@@ -164,10 +150,6 @@ const lci::device_t& control_device(const IrregularRuntime& runtime) {
 
 lci::rcomp_t remote_completion(const IrregularRuntime& runtime) {
   return runtime.am_rcomp_;
-}
-
-lci::comp_t send_counter(const IrregularRuntime& runtime) {
-  return runtime.send_counter_;
 }
 
 uint32_t register_exchange(IrregularRuntime& runtime, AmExchangeStateBase* state) {

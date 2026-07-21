@@ -4,10 +4,11 @@
 
 namespace lci_irregular {
 
-// Runtime-level LCI resource tuning. Zero send/receive limits use the default
-// packet-pool heuristic from the original IS LCI implementation.
+// Runtime-level LCI resource tuning. The application decides how many LCI
+// devices its workers should share; the irregular runtime does not create or
+// query application threads.
 struct IrregularRuntimeOptions {
-  int threads_per_device = 1;
+  int device_count = 1;
   size_t max_sends_per_device = 0;
   size_t max_recvs_per_device = 0;
 };
