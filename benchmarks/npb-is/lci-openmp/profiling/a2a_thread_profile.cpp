@@ -1,4 +1,4 @@
-#include "communication/profiling/a2a_thread_profile.hpp"
+#include "profiling/a2a_thread_profile.hpp"
 
 #ifdef A2A_TL_TIMERS
 

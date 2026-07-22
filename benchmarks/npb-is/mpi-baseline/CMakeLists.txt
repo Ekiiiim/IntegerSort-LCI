@@ -20,7 +20,7 @@ foreach(CLASS ${NPB_CLASSES})
   add_executable(${TARGET_NAME} is.c)
 
   # Link libraries
-  target_link_libraries(${TARGET_NAME} PRIVATE common MPI::MPI_C)
+  target_link_libraries(${TARGET_NAME} PRIVATE npb_is_common MPI::MPI_C)
 
   # Compile definitions
   set_npb_definitions(${TARGET_NAME} ${CLASS})

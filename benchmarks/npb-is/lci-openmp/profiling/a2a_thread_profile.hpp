@@ -1,6 +1,6 @@
 #pragma once
 
-#include "types.hpp"
+#include "integer_sort/types.hpp"
 
 // Optional per-thread profiling for the LCI all-to-all redistribution path.
 #ifdef A2A_TL_TIMERS

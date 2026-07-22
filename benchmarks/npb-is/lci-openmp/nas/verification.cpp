@@ -247,7 +247,7 @@ void full_verify(KeyValue* key_array, const FullVerifySnapshot& snapshot, int my
   }
 
 /*  Confirm keys correctly sorted: count incorrectly sorted keys, if any */
-#pragma omp parallel for schedule(static) reduction(+ : out_of_order)
+  #pragma omp parallel for schedule(static) reduction(+ : out_of_order)
   for (KeyCount i = 1; i < snapshot.total_local_keys; i++) {
     if (key_array[i - 1] > key_array[i]) {
       out_of_order++;

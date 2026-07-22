@@ -3,8 +3,8 @@ if(NOT IS_BUILD_LCI)
   return()
 endif()
 
-find_package(OpenMP)
-if(NOT OpenMP_FOUND)
+find_package(OpenMP COMPONENTS CXX)
+if(NOT OpenMP_CXX_FOUND)
   message(WARNING "OpenMP not found. LCI version of IS benchmark will not be built.")
   return()
 endif()
@@ -17,13 +17,12 @@ foreach(CLASS ${NPB_CLASSES})
   set(TARGET_NAME is_lci_${CLASS})
 
   add_executable(${TARGET_NAME}
-    is.cpp
+    main.cpp
     nas/timers.cpp
     benchmark_support/nas_integer_sort_run.cpp
-    benchmark_support/results.cpp
     benchmark_support/run_options.cpp
-    communication/profiling/a2a_thread_profile.cpp
-    communication/reductions.cpp
+    profiling/a2a_thread_profile.cpp
+    benchmark_support/reduction_operations.cpp
     integer_sort/bucket_plan.cpp
     integer_sort/key_redistribution.cpp
     integer_sort/ranking.cpp
@@ -34,11 +33,10 @@ foreach(CLASS ${NPB_CLASSES})
     nas/verification.cpp)
 
   # Include directories
-  target_include_directories(${TARGET_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}
-                                                    ${CMAKE_SOURCE_DIR}/common)
+  target_include_directories(${TARGET_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 
   # Link common library
-  target_link_libraries(${TARGET_NAME} PRIVATE common OpenMP::OpenMP_CXX LCIIrregular::lci_irregular)
+  target_link_libraries(${TARGET_NAME} PRIVATE npb_is_common OpenMP::OpenMP_CXX LCIIrregular::lci_irregular)
 
   # Compile definitions
   if(IS_LCI_ENABLE_TIMERS)

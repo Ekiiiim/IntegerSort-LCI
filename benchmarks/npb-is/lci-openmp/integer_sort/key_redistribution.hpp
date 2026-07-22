@@ -1,7 +1,7 @@
 #pragma once
 
 #include <lci-irregular/irregular_runtime.hpp>
-#include "types.hpp"
+#include "integer_sort/types.hpp"
 
 #include <atomic>
 

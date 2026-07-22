@@ -34,6 +34,4 @@ target_include_directories(
 target_link_libraries(lci_irregular PUBLIC LCI::lci)
 
 # Add subdirectories
-add_subdirectory(common)
-add_subdirectory(LCI)
-add_subdirectory(MPI)
+add_subdirectory(benchmarks/npb-is)

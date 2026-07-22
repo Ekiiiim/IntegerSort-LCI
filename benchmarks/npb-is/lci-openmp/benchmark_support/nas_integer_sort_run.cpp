@@ -1,20 +1,39 @@
 #include "benchmark_support/nas_integer_sort_run.hpp"
 
-#include "benchmark_support/results.hpp"
 #include "benchmark_support/run_options.hpp"
-#include "communication/profiling/a2a_thread_profile.hpp"
-#include "communication/reductions.hpp"
+#include "benchmark_support/reduction_operations.hpp"
 #include "integer_sort/key_redistribution.hpp"
 #include "integer_sort/ranking.hpp"
 #include <lci-irregular/irregular_runtime.hpp>
 #include "nas/key_generation.hpp"
 #include "nas/problem_config.hpp"
+#include "nas/reporting.hpp"
 #include "nas/run_rules.hpp"
 #include "nas/timers.hpp"
 #include "nas/verification.hpp"
+#include "profiling/a2a_thread_profile.hpp"
 
 #include <cstdio>
 #include <cstdlib>
+
+namespace {
+
+void print_initial_status(int rank, int total_rank_count, int active_rank_count, int use_upacket, int use_loopback) {
+  is_lci::print_nas_initial_status(rank, total_rank_count, active_rank_count);
+
+  if (rank != 0) {
+    return;
+  }
+
+  printf(use_upacket ? " Using upacket for buffer management\n" : " Using malloc/free for buffer management\n");
+  printf(use_loopback ? " Loopback optimization: ENABLED\n" : " Loopback optimization: DISABLED\n");
+}
+
+void print_final_results(int active_rank_count, int total_rank_count, double max_time, int passed_verification) {
+  is_lci::print_nas_final_results(active_rank_count, total_rank_count, max_time, passed_verification);
+}
+
+} // namespace
 
 namespace is_lci {
 

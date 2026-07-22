@@ -1,6 +1,6 @@
 #pragma once
 
-#include "types.hpp"
+#include "integer_sort/types.hpp"
 
 namespace is_lci {
 

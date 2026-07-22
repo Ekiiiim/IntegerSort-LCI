@@ -40,7 +40,7 @@
  *
  *  This executable is intentionally written as an algorithm script. The
  *  implementation details for each step live under irregular/,
- *  benchmark_support/, integer_sort/, communication/, and nas/.
+ *  benchmark_support/, integer_sort/, profiling/, and nas/.
  *************************************************************************/
 
 #include "benchmark_support/nas_integer_sort_run.hpp"
