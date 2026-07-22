@@ -1,7 +1,15 @@
 @PACKAGE_INIT@
 
 include(CMakeFindDependencyMacro)
-find_dependency(LCI CONFIG)
+find_dependency(
+  LCI
+  CONFIG
+  HINTS
+  ${LCI_ROOT}
+  $ENV{LCI_ROOT}
+  PATH_SUFFIXES
+  lib/cmake
+  lib64/cmake)
 
 include("${CMAKE_CURRENT_LIST_DIR}/LCIIrregularTargets.cmake")
 check_required_components(LCIIrregular)
