@@ -94,7 +94,7 @@ Each sender belongs to one worker and is not shared concurrently. Different work
 
 Participating ranks must create exchanges in the same order and complete application phase synchronization before the first send. This keeps the nonblocking start operation free of an implicit global barrier while ensuring that a remote active message cannot arrive before its exchange is registered.
 
-All senders must be flushed and no longer used before `wait()` or `profile()`. An exchange must complete before destruction. `wait()` is the blocking completion operation; `is_done()` and `progress()` support integration with an application's own scheduling loop.
+All senders must be flushed and all other sender/progress workers must stop operating on the exchange before one thread calls `wait()` or `profile()`. An exchange must complete before destruction. `wait()` is the blocking completion operation; `is_done()` and `progress()` support integration with an application's own scheduling loop.
 
 ## Profiling
 

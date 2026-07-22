@@ -103,6 +103,9 @@ void IrregularRuntime::progress() const {
 }
 
 void IrregularRuntime::progress(size_t worker_index) const {
+  if (profiling_options_.enabled && worker_index >= profiling_options_.worker_count) {
+    throw std::invalid_argument("LCI irregular worker index exceeds profiling worker_count");
+  }
   detail::ProgressWorkerScope worker_scope(worker_index);
   lci::progress_x().device(devices_[worker_index % devices_.size()])();
 }

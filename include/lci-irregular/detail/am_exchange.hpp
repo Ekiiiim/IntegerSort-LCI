@@ -414,6 +414,8 @@ public:
     return invoke_is_done() && local_sends_complete();
   }
 
+  // No other sender or progress worker may operate on this exchange while
+  // wait() or profile() finalizes its statistics and lifetime state.
   void wait() {
     while (!is_done()) {
       progress();
