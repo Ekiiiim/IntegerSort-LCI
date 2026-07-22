@@ -155,8 +155,6 @@ void NasIntegerSortRun::assign_buckets_to_processes() {
 
   workspace().clear_frequency_range(current_bucket_plan_.min_key_value, current_bucket_plan_.max_key_value);
 
-  runtime_.barrier();
-
   timer_stop_if_enabled(T_RANK);
 }
 
