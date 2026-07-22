@@ -42,6 +42,7 @@ lci::rcomp_t remote_completion(const IrregularRuntime& runtime);
 uint32_t register_exchange(IrregularRuntime& runtime, AmExchangeStateBase* state);
 void deregister_exchange(IrregularRuntime& runtime, uint32_t exchange_id);
 AmExchangeStateBase* find_exchange(IrregularRuntime& runtime, uint32_t exchange_id);
+void submit_profile(IrregularRuntime& runtime, AmExchangeProfile profile);
 } // namespace detail
 
 class IrregularRuntime {
@@ -57,6 +58,7 @@ public:
   int device_count() const;
   bool profiling_enabled() const noexcept;
   size_t profiling_worker_count() const noexcept;
+  void write_profiles();
 
   void barrier() const;
   void broadcast_int(int* value, int root) const;
@@ -97,6 +99,7 @@ private:
   friend uint32_t detail::register_exchange(IrregularRuntime& runtime, detail::AmExchangeStateBase* state);
   friend void detail::deregister_exchange(IrregularRuntime& runtime, uint32_t exchange_id);
   friend detail::AmExchangeStateBase* detail::find_exchange(IrregularRuntime& runtime, uint32_t exchange_id);
+  friend void detail::submit_profile(IrregularRuntime& runtime, AmExchangeProfile profile);
 
   const lci::device_t& control_device() const;
   void allocate_devices(const IrregularRuntimeOptions& options);
@@ -115,6 +118,10 @@ private:
   std::mutex exchange_mutex_;
   std::unordered_map<uint32_t, detail::AmExchangeStateBase*> exchanges_;
   ProfilingOptions profiling_options_;
+  std::mutex profile_mutex_;
+  std::mutex profile_write_mutex_;
+  std::vector<AmExchangeProfile> pending_profiles_;
+  bool profile_output_started_ = false;
 };
 
 namespace detail {

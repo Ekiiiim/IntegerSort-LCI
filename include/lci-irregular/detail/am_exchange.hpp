@@ -370,6 +370,11 @@ public:
   }
 
   ~AmExchange() {
+    if (!is_complete_without_progress()) {
+      std::fprintf(stderr, "LCI irregular AM exchange destroyed before completion\n");
+      std::terminate();
+    }
+    finalize_profile_once();
     if (registered_) {
       detail::deregister_exchange(*runtime_, exchange_id_);
     }
@@ -409,12 +414,14 @@ public:
     while (!is_done()) {
       progress();
     }
+    finalize_profile_once();
   }
 
   AmExchangeProfile profile() {
     if (!is_complete_without_progress()) {
       throw std::logic_error("LCI irregular AM profile requested before exchange completion");
     }
+    finalize_profile_once();
     return profile_.snapshot();
   }
 
@@ -446,6 +453,14 @@ private:
     }
   }
 
+  void finalize_profile_once() {
+    std::call_once(profile_finalize_once_, [this] {
+      if (profile_.enabled()) {
+        detail::submit_profile(*runtime_, profile_.snapshot());
+      }
+    });
+  }
+
   IrregularRuntime* runtime_;
   ReceiveBatch receive_batch_;
   IsDone is_done_;
@@ -458,6 +473,7 @@ private:
   std::atomic<size_t> posted_send_count_{0};
   uint32_t exchange_id_ = 0;
   bool registered_ = false;
+  std::once_flag profile_finalize_once_;
 };
 
 template <typename Record, typename ReceiveBatch, typename IsDone>

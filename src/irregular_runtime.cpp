@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <stdexcept>
 
 namespace lci_irregular {
 namespace {
@@ -14,6 +15,13 @@ IrregularRuntime* g_active_runtime = nullptr;
 } // namespace
 
 IrregularRuntime::IrregularRuntime(IrregularRuntimeOptions options) : profiling_options_(options.profiling) {
+  if (profiling_options_.enabled && profiling_options_.worker_count == 0) {
+    throw std::invalid_argument("profiling worker_count must be positive");
+  }
+  if (profiling_options_.file_prefix.empty() || profiling_options_.file_prefix.find('/') != std::string::npos ||
+      profiling_options_.file_prefix.find('\\') != std::string::npos) {
+    throw std::invalid_argument("profiling file_prefix must be a file-name prefix");
+  }
   if (g_active_runtime != nullptr) {
     std::fprintf(stderr, "IrregularRuntime supports only one instance per process\n");
     std::abort();
@@ -37,6 +45,13 @@ IrregularRuntime::IrregularRuntime(IrregularRuntimeOptions options) : profiling_
 }
 
 IrregularRuntime::~IrregularRuntime() {
+  if (profiling_options_.enabled && !profiling_options_.output_directory.empty()) {
+    try {
+      write_profiles();
+    } catch (const std::exception& error) {
+      std::fprintf(stderr, "[lci-irregular] unable to write profiles: %s\n", error.what());
+    }
+  }
   if (am_rcomp_ != 0) {
     lci::deregister_rcomp(am_rcomp_);
     am_rcomp_ = 0;
@@ -174,6 +189,11 @@ void deregister_exchange(IrregularRuntime& runtime, uint32_t exchange_id) {
 
 AmExchangeStateBase* find_exchange(IrregularRuntime& runtime, uint32_t exchange_id) {
   return runtime.find_exchange(exchange_id);
+}
+
+void submit_profile(IrregularRuntime& runtime, AmExchangeProfile profile) {
+  std::lock_guard<std::mutex> lock(runtime.profile_mutex_);
+  runtime.pending_profiles_.push_back(std::move(profile));
 }
 
 } // namespace detail
