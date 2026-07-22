@@ -4,6 +4,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 
 namespace lci_irregular {
 class IrregularRuntime;
@@ -18,7 +19,8 @@ struct AmMessageHeader {
 class AmExchangeStateBase {
 public:
   virtual ~AmExchangeStateBase() = default;
-  virtual void receive_message(int source_rank, const void* message, size_t message_bytes) = 0;
+  virtual void receive_message(int source_rank, const void* message, size_t message_bytes, bool loopback,
+                               std::optional<size_t> worker_index) = 0;
 };
 
 IrregularRuntime& active_runtime();

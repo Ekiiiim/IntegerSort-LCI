@@ -1,4 +1,5 @@
 #include <lci-irregular/detail/am_exchange_state.hpp>
+#include <lci-irregular/detail/profiling.hpp>
 
 #include <lci-irregular/irregular_runtime.hpp>
 
@@ -23,7 +24,7 @@ void am_handler(lci::status_t status) {
     std::abort();
   }
 
-  state->receive_message(status.get_rank(), status.get_buffer(), status.get_size());
+  state->receive_message(status.get_rank(), status.get_buffer(), status.get_size(), false, progress_worker());
   lci::put_upacket(status.get_buffer());
 }
 

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <lci-irregular/detail/profile_types.hpp>
+
 #include <lci.hpp>
 
 #include <cstddef>
@@ -17,6 +19,7 @@ struct IrregularRuntimeOptions {
   int device_count = 1;
   size_t max_sends_per_device = 0;
   size_t max_recvs_per_device = 0;
+  ProfilingOptions profiling;
 };
 
 // Per-exchange active-message aggregation settings.
@@ -24,6 +27,7 @@ struct AmExchangeOptions {
   bool use_upacket = true;
   bool use_loopback = true;
   size_t batch_records = 0;
+  std::string profile_name;
 };
 
 class IrregularRuntime;
@@ -51,6 +55,8 @@ public:
   int rank() const;
   int rank_count() const;
   int device_count() const;
+  bool profiling_enabled() const noexcept;
+  size_t profiling_worker_count() const noexcept;
 
   void barrier() const;
   void broadcast_int(int* value, int root) const;
@@ -74,14 +80,15 @@ public:
   // records into aggregated AM payloads; callers provide routing, receive, and
   // completion logic.
   template <typename Record, typename RouteRecord, typename ReceiveBatch>
-  void am_exchange_counted(const Record* records, size_t count, RouteRecord route_record, ReceiveBatch receive_batch,
-                           size_t expected_recv_count, AmExchangeOptions options = {});
+  AmExchangeProfile am_exchange_counted(const Record* records, size_t count, RouteRecord route_record,
+                                        ReceiveBatch receive_batch, size_t expected_recv_count,
+                                        AmExchangeOptions options = {});
 
   // General completion variant. is_done() must become true only after all
   // application-expected inbound records/messages have been processed.
   template <typename Record, typename RouteRecord, typename ReceiveBatch, typename IsDone>
-  void am_exchange_until(const Record* records, size_t count, RouteRecord route_record, ReceiveBatch receive_batch,
-                         IsDone is_done, AmExchangeOptions options = {});
+  AmExchangeProfile am_exchange_until(const Record* records, size_t count, RouteRecord route_record,
+                                      ReceiveBatch receive_batch, IsDone is_done, AmExchangeOptions options = {});
 
 private:
   friend const std::vector<lci::device_t>& detail::devices(const IrregularRuntime& runtime);
@@ -107,6 +114,7 @@ private:
   uint32_t next_exchange_id_ = 1;
   std::mutex exchange_mutex_;
   std::unordered_map<uint32_t, detail::AmExchangeStateBase*> exchanges_;
+  ProfilingOptions profiling_options_;
 };
 
 namespace detail {

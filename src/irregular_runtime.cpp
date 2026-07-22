@@ -1,5 +1,7 @@
 #include <lci-irregular/irregular_runtime.hpp>
 
+#include <lci-irregular/detail/profiling.hpp>
+
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
@@ -11,7 +13,7 @@ IrregularRuntime* g_active_runtime = nullptr;
 
 } // namespace
 
-IrregularRuntime::IrregularRuntime(IrregularRuntimeOptions options) {
+IrregularRuntime::IrregularRuntime(IrregularRuntimeOptions options) : profiling_options_(options.profiling) {
   if (g_active_runtime != nullptr) {
     std::fprintf(stderr, "IrregularRuntime supports only one instance per process\n");
     std::abort();
@@ -59,6 +61,14 @@ int IrregularRuntime::device_count() const {
   return static_cast<int>(devices_.size());
 }
 
+bool IrregularRuntime::profiling_enabled() const noexcept {
+  return profiling_options_.enabled;
+}
+
+size_t IrregularRuntime::profiling_worker_count() const noexcept {
+  return profiling_options_.worker_count;
+}
+
 const lci::device_t& IrregularRuntime::control_device() const {
   return devices_[0];
 }
@@ -76,12 +86,14 @@ void IrregularRuntime::broadcast_bytes(void* data, size_t bytes, int root) const
 }
 
 void IrregularRuntime::progress() const {
+  detail::ProgressWorkerScope worker_scope(std::nullopt);
   for (const auto& device : devices_) {
     lci::progress_x().device(device)();
   }
 }
 
 void IrregularRuntime::progress(size_t worker_index) const {
+  detail::ProgressWorkerScope worker_scope(worker_index);
   lci::progress_x().device(devices_[worker_index % devices_.size()])();
 }
 
