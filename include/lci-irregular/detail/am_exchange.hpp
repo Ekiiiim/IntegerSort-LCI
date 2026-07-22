@@ -520,6 +520,7 @@ AmExchangeProfile IrregularRuntime::am_exchange_until(const Record* records, siz
   }
 
   auto exchange = am_exchange_start<Record>(std::move(receive_batch), std::move(is_done), options);
+  barrier();
   auto sender = exchange.make_sender();
   for (size_t i = 0; i < count; ++i) {
     sender.am_send(route_record(records[i]), records[i]);

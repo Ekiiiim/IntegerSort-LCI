@@ -81,7 +81,8 @@ public:
 
   // Blocking active-message exchange for fixed-size records. The runtime packs
   // records into aggregated AM payloads; callers provide routing, receive, and
-  // completion logic.
+  // completion logic. All runtime ranks participate in its registration
+  // barrier and exchange.
   template <typename Record, typename RouteRecord, typename ReceiveBatch>
   AmExchangeProfile am_exchange_counted(const Record* records, size_t count, RouteRecord route_record,
                                         ReceiveBatch receive_batch, size_t expected_recv_count,
