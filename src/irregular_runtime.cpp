@@ -15,6 +15,9 @@ IrregularRuntime* g_active_runtime = nullptr;
 } // namespace
 
 IrregularRuntime::IrregularRuntime(IrregularRuntimeOptions options) : profiling_options_(options.profiling) {
+  if (options.device_count <= 0) {
+    throw std::invalid_argument("LCI irregular device_count must be positive");
+  }
   if (profiling_options_.enabled && profiling_options_.worker_count == 0) {
     throw std::invalid_argument("profiling worker_count must be positive");
   }
@@ -23,20 +26,12 @@ IrregularRuntime::IrregularRuntime(IrregularRuntimeOptions options) : profiling_
     throw std::invalid_argument("profiling file_prefix must be a file-name prefix");
   }
   if (g_active_runtime != nullptr) {
-    std::fprintf(stderr, "IrregularRuntime supports only one instance per process\n");
-    std::abort();
+    throw std::logic_error("IrregularRuntime supports only one live instance per process");
   }
 
   lci::g_runtime_init_x().alloc_default_device(false)();
   rank_ = lci::get_rank_me();
   rank_count_ = lci::get_rank_n();
-  if (options.device_count <= 0) {
-    if (rank_ == 0) {
-      std::fprintf(stderr, "[Warning] Invalid LCI irregular device_count value %d, using 1 instead\n",
-                   options.device_count);
-    }
-    options.device_count = 1;
-  }
   allocate_devices(options);
   am_handler_ = lci::alloc_handler_x(detail::am_handler).zero_copy_am(true)();
   am_rcomp_ = lci::register_rcomp(am_handler_);
@@ -113,7 +108,7 @@ void IrregularRuntime::progress(size_t worker_index) const {
 }
 
 void IrregularRuntime::allocate_devices(const IrregularRuntimeOptions& options) {
-  int num_devices = std::max(1, options.device_count);
+  int num_devices = options.device_count;
   size_t npackets = lci::get_default_packet_pool().get_attr_npackets();
   size_t max_recvs_per_device = options.max_recvs_per_device;
   size_t max_sends_per_device = options.max_sends_per_device;

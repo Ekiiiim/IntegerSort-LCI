@@ -20,11 +20,11 @@ class AmExchangeStateBase {
 public:
   virtual ~AmExchangeStateBase() = default;
   virtual void receive_message(int source_rank, const void* message, size_t message_bytes, bool loopback,
-                               std::optional<size_t> worker_index) = 0;
+                               std::optional<size_t> worker_index) noexcept = 0;
 };
 
 IrregularRuntime& active_runtime();
-void am_handler(lci::status_t status);
+void am_handler(lci::status_t status) noexcept;
 
 } // namespace detail
 } // namespace lci_irregular

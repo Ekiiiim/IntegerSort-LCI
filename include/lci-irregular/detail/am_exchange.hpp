@@ -46,7 +46,21 @@ public:
   }
 
   void receive_message(int source_rank, const void* message, size_t message_bytes, bool loopback,
-                       std::optional<size_t> worker_index) override {
+                       std::optional<size_t> worker_index) noexcept override {
+    try {
+      receive_message_impl(source_rank, message, message_bytes, loopback, worker_index);
+    } catch (const std::exception& error) {
+      std::fprintf(stderr, "LCI irregular receive callback terminated after exception: %s\n", error.what());
+      std::terminate();
+    } catch (...) {
+      std::fprintf(stderr, "LCI irregular receive callback terminated after unknown exception\n");
+      std::terminate();
+    }
+  }
+
+private:
+  void receive_message_impl(int source_rank, const void* message, size_t message_bytes, bool loopback,
+                            std::optional<size_t> worker_index) {
     AmMessageHeader header{};
     std::memcpy(&header, message, sizeof(header));
     if (header.exchange_id != exchange_id_) {
@@ -69,7 +83,8 @@ public:
     if (reinterpret_cast<uintptr_t>(payload) % alignof(Record) != 0) {
       aligned_payload = std::malloc(header.record_count * sizeof(Record));
       if (aligned_payload == nullptr && header.record_count != 0) {
-        throw std::bad_alloc();
+        std::fprintf(stderr, "LCI irregular receive buffer allocation failed\n");
+        std::terminate();
       }
       std::memcpy(aligned_payload, payload, header.record_count * sizeof(Record));
       records = static_cast<const Record*>(aligned_payload);
@@ -82,7 +97,6 @@ public:
                     header.record_count, header.record_count * sizeof(Record), elapsed_nanoseconds(start));
   }
 
-private:
   uint32_t exchange_id_ = 0;
   ReceiveBatch& receive_batch_;
   AmProfileRecorder& profile_;
@@ -202,24 +216,18 @@ template <typename Record> size_t choose_batch_records(AmExchangeOptions options
   size_t header = header_bytes<Record>();
   size_t lci_eager_margin = sizeof(lci::tag_t) + sizeof(lci::rcomp_t);
   if (max_bcopy <= header + lci_eager_margin) {
-    std::fprintf(stderr, "LCI eager AM size %zu cannot fit irregular AM header %zu with LCI metadata margin %zu\n",
-                 max_bcopy, header, lci_eager_margin);
-    std::abort();
+    throw std::invalid_argument("LCI eager AM size cannot fit the irregular AM header and metadata");
   }
 
   size_t max_records = (max_bcopy - header - lci_eager_margin) / sizeof(Record);
   if (max_records == 0) {
-    std::fprintf(stderr, "LCI eager AM size %zu cannot fit one irregular AM record of %zu bytes\n", max_bcopy,
-                 sizeof(Record));
-    std::abort();
+    throw std::invalid_argument("LCI eager AM size cannot fit one record of the requested type");
   }
   if (options.batch_records == 0) {
     return max_records;
   }
   if (options.batch_records > max_records) {
-    std::fprintf(stderr, "Requested AM batch size %zu exceeds maximum %zu for this record type\n",
-                 options.batch_records, max_records);
-    std::abort();
+    throw std::invalid_argument("requested AM batch size exceeds the maximum for this record type");
   }
   return options.batch_records;
 }
@@ -240,8 +248,7 @@ public:
         size_t storage_bytes = exchange_->bytes_per_buffer_ * static_cast<size_t>(exchange_->rank_count());
         fallback_storage_ = std::malloc(storage_bytes);
         if (fallback_storage_ == nullptr && storage_bytes != 0) {
-          std::fprintf(stderr, "Failed to allocate LCI irregular AM fallback buffers\n");
-          std::abort();
+          throw std::bad_alloc();
         }
       }
     }
@@ -277,9 +284,7 @@ public:
     void am_send(int dest_rank, const Record& record) {
       validate_active();
       if (dest_rank < 0 || dest_rank >= exchange_->rank_count()) {
-        std::fprintf(stderr, "LCI irregular AM route returned invalid rank %d on rank %d\n", dest_rank,
-                     exchange_->rank());
-        std::abort();
+        throw std::invalid_argument("LCI irregular AM route returned an invalid destination rank");
       }
 
       void* fallback_buffer = nullptr;
@@ -336,8 +341,7 @@ public:
 
     void validate_active() const {
       if (exchange_ == nullptr) {
-        std::fprintf(stderr, "LCI irregular AM sender used after move\n");
-        std::abort();
+        throw std::logic_error("LCI irregular AM sender used after move");
       }
     }
 
@@ -407,7 +411,7 @@ public:
   }
 
   bool is_done() {
-    return is_done_() && local_sends_complete();
+    return invoke_is_done() && local_sends_complete();
   }
 
   void wait() {
@@ -444,7 +448,19 @@ private:
   }
 
   bool is_complete_without_progress() {
-    return is_done_() && local_sends_complete();
+    return invoke_is_done() && local_sends_complete();
+  }
+
+  bool invoke_is_done() noexcept {
+    try {
+      return is_done_();
+    } catch (const std::exception& error) {
+      std::fprintf(stderr, "LCI irregular completion callback terminated after exception: %s\n", error.what());
+      std::terminate();
+    } catch (...) {
+      std::fprintf(stderr, "LCI irregular completion callback terminated after unknown exception\n");
+      std::terminate();
+    }
   }
 
   void validate_profile_worker(size_t worker_index) const {
@@ -500,8 +516,7 @@ AmExchangeProfile IrregularRuntime::am_exchange_until(const Record* records, siz
                                                       ReceiveBatch receive_batch, IsDone is_done,
                                                       AmExchangeOptions options) {
   if (records == nullptr && count != 0) {
-    std::fprintf(stderr, "LCI irregular AM exchange received null records with nonzero count\n");
-    std::abort();
+    throw std::invalid_argument("LCI irregular AM exchange received null records with nonzero count");
   }
 
   auto exchange = am_exchange_start<Record>(std::move(receive_batch), std::move(is_done), options);

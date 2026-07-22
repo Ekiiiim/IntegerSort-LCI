@@ -35,7 +35,7 @@ template <typename Record, typename ReceiveBatch, typename IsDone> class AmExcha
 
 namespace detail {
 class AmExchangeStateBase;
-void am_handler(lci::status_t status);
+void am_handler(lci::status_t status) noexcept;
 const std::vector<lci::device_t>& devices(const IrregularRuntime& runtime);
 const lci::device_t& control_device(const IrregularRuntime& runtime);
 lci::rcomp_t remote_completion(const IrregularRuntime& runtime);
