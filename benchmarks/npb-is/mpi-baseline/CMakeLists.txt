@@ -1,16 +1,6 @@
 # MPI version of IS benchmark Build executables for all classes A through E
 
-option(IS_BUILD_MPI "Build the MPI version of the Integer Sort benchmark" ON)
-if(NOT IS_BUILD_MPI)
-  return()
-endif()
-
-find_package(MPI COMPONENTS C)
-
-if(NOT MPI_FOUND)
-  message(WARNING "Could not find MPI. MPI version of IS benchmark will not be built.")
-  return()
-endif()
+find_package(MPI COMPONENTS C REQUIRED)
 
 message(STATUS "Building MPI version of IS benchmark")
 

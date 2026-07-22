@@ -1,0 +1,5 @@
+add_executable(lci_irregular_typed_am_example typed_am_exchange.cpp)
+target_link_libraries(lci_irregular_typed_am_example PRIVATE LCIIrregular::lci_irregular)
+set_target_properties(
+  lci_irregular_typed_am_example
+  PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)

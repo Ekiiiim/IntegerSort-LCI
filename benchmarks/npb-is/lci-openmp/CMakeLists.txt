@@ -1,13 +1,4 @@
-option(IS_BUILD_LCI "Build the LCI version of the Integer Sort benchmark" ON)
-if(NOT IS_BUILD_LCI)
-  return()
-endif()
-
-find_package(OpenMP COMPONENTS CXX)
-if(NOT OpenMP_CXX_FOUND)
-  message(WARNING "OpenMP not found. LCI version of IS benchmark will not be built.")
-  return()
-endif()
+find_package(OpenMP COMPONENTS CXX REQUIRED)
 
 message(STATUS "Building LCI version of IS benchmark")
 
