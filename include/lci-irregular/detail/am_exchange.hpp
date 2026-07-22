@@ -147,16 +147,18 @@ public:
     return message_bytes<Record>(record_count_);
   }
 
+  void finalize_header() {
+    write_message_header<Record>(buffer_, exchange_id_, record_count_);
+  }
+
   void push(const Record& record, lci::device_t device, void* fallback_buffer) {
     if (buffer_ == nullptr) {
       buffer_ = fallback_buffer == nullptr ? allocate_upacket_blocking<Record>(device) : fallback_buffer;
-      write_message_header<Record>(buffer_, exchange_id_, 0);
     }
     void* dst =
         static_cast<void*>(static_cast<char*>(buffer_) + header_bytes<Record>() + record_count_ * sizeof(Record));
     std::memcpy(dst, &record, sizeof(Record));
     record_count_++;
-    write_message_header<Record>(buffer_, exchange_id_, record_count_);
   }
 
 private:
@@ -173,6 +175,7 @@ void post_send_buffer(int dest_rank, SendBuffer<Record>& send_buffer, int my_ran
   if (send_buffer.empty()) {
     return;
   }
+  send_buffer.finalize_header();
 
   if (dest_rank == my_rank && use_loopback) {
     state.receive_message(my_rank, send_buffer.data(), send_buffer.size_in_bytes(), true, worker_index);
@@ -202,12 +205,11 @@ void post_send_buffer(int dest_rank, SendBuffer<Record>& send_buffer, int my_ran
 template <typename Record> size_t choose_batch_records(AmExchangeOptions options) {
   size_t max_bcopy = lci::get_max_bcopy_size();
   size_t header = header_bytes<Record>();
-  size_t lci_eager_margin = sizeof(lci::tag_t) + sizeof(lci::rcomp_t);
-  if (max_bcopy <= header + lci_eager_margin) {
-    throw std::invalid_argument("LCI eager AM size cannot fit the irregular AM header and metadata");
+  if (max_bcopy <= header) {
+    throw std::invalid_argument("LCI eager AM size cannot fit the irregular AM header");
   }
 
-  size_t max_records = (max_bcopy - header - lci_eager_margin) / sizeof(Record);
+  size_t max_records = (max_bcopy - header) / sizeof(Record);
   if (max_records == 0) {
     throw std::invalid_argument("LCI eager AM size cannot fit one record of the requested type");
   }
@@ -233,9 +235,14 @@ public:
   class Sender {
   public:
     Sender(AmExchange& exchange, size_t worker_index)
-        : exchange_(&exchange), worker_index_(worker_index), send_buffers_(make_send_buffers(exchange)) {
-      if (!exchange_->options_.use_upacket) {
-        size_t storage_bytes = exchange_->bytes_per_buffer_ * static_cast<size_t>(exchange_->rank_count());
+        : exchange_(&exchange), worker_index_(worker_index), rank_count_(exchange.rank_count()), rank_(exchange.rank()),
+          device_(exchange.device_for_worker(worker_index)), profiling_enabled_(exchange.profile_.enabled()),
+          use_upacket_(exchange.options_.use_upacket), use_loopback_(exchange.options_.use_loopback),
+          bytes_per_buffer_(exchange.bytes_per_buffer_),
+          remote_completion_(detail::remote_completion(*exchange.runtime_)),
+          send_buffers_(make_send_buffers(exchange.exchange_id_, exchange.batch_records_, rank_count_)) {
+      if (!use_upacket_) {
+        size_t storage_bytes = bytes_per_buffer_ * static_cast<size_t>(rank_count_);
         fallback_storage_ = std::malloc(storage_bytes);
         if (fallback_storage_ == nullptr && storage_bytes != 0) {
           throw std::bad_alloc();
@@ -263,8 +270,11 @@ public:
     Sender& operator=(const Sender&) = delete;
 
     Sender(Sender&& other) noexcept
-        : exchange_(other.exchange_), worker_index_(other.worker_index_), send_buffers_(std::move(other.send_buffers_)),
-          fallback_storage_(other.fallback_storage_) {
+        : exchange_(other.exchange_), worker_index_(other.worker_index_), rank_count_(other.rank_count_),
+          rank_(other.rank_), device_(other.device_), profiling_enabled_(other.profiling_enabled_),
+          use_upacket_(other.use_upacket_), use_loopback_(other.use_loopback_),
+          bytes_per_buffer_(other.bytes_per_buffer_), remote_completion_(other.remote_completion_),
+          send_buffers_(std::move(other.send_buffers_)), fallback_storage_(other.fallback_storage_) {
       other.exchange_ = nullptr;
       other.fallback_storage_ = nullptr;
     }
@@ -276,6 +286,14 @@ public:
       cleanup();
       exchange_ = other.exchange_;
       worker_index_ = other.worker_index_;
+      rank_count_ = other.rank_count_;
+      rank_ = other.rank_;
+      device_ = other.device_;
+      profiling_enabled_ = other.profiling_enabled_;
+      use_upacket_ = other.use_upacket_;
+      use_loopback_ = other.use_loopback_;
+      bytes_per_buffer_ = other.bytes_per_buffer_;
+      remote_completion_ = other.remote_completion_;
       send_buffers_ = std::move(other.send_buffers_);
       fallback_storage_ = other.fallback_storage_;
       other.exchange_ = nullptr;
@@ -297,19 +315,18 @@ public:
 
     void am_send(int dest_rank, const Record& record) {
       validate_active();
-      if (dest_rank < 0 || dest_rank >= exchange_->rank_count()) {
+      if (dest_rank < 0 || dest_rank >= rank_count_) {
         throw std::invalid_argument("LCI irregular AM route returned an invalid destination rank");
       }
 
       void* fallback_buffer = nullptr;
-      if (!exchange_->options_.use_upacket) {
-        fallback_buffer =
-            detail::byte_offset(fallback_storage_, static_cast<size_t>(dest_rank) * exchange_->bytes_per_buffer_);
+      if (!use_upacket_) {
+        fallback_buffer = detail::byte_offset(fallback_storage_, static_cast<size_t>(dest_rank) * bytes_per_buffer_);
       }
 
       detail::SendBuffer<Record>& send_buffer = send_buffers_[static_cast<size_t>(dest_rank)];
-      detail::ProgressWorkerScope worker_scope(exchange_->profile_.enabled(), worker_index_);
-      send_buffer.push(record, exchange_->device_for_worker(worker_index_), fallback_buffer);
+      detail::ProgressWorkerScope worker_scope(profiling_enabled_, worker_index_);
+      send_buffer.push(record, device_, fallback_buffer);
       if (send_buffer.size() == send_buffer.capacity()) {
         flush(dest_rank);
       }
@@ -317,19 +334,18 @@ public:
 
     void flush() {
       validate_active();
-      int my_rank = exchange_->rank();
-      int comm_size = exchange_->rank_count();
-      for (int i = 0; i < comm_size; ++i) {
-        flush((my_rank + i) % comm_size);
+      for (int i = 0; i < rank_count_; ++i) {
+        flush((rank_ + i) % rank_count_);
       }
     }
 
   private:
-    static std::vector<detail::SendBuffer<Record>> make_send_buffers(AmExchange& exchange) {
+    static std::vector<detail::SendBuffer<Record>> make_send_buffers(uint32_t exchange_id, size_t batch_records,
+                                                                     int rank_count) {
       std::vector<detail::SendBuffer<Record>> send_buffers;
-      send_buffers.reserve(static_cast<size_t>(exchange.rank_count()));
-      for (int rank = 0; rank < exchange.rank_count(); ++rank) {
-        send_buffers.emplace_back(exchange.exchange_id_, exchange.batch_records_);
+      send_buffers.reserve(static_cast<size_t>(rank_count));
+      for (int rank = 0; rank < rank_count; ++rank) {
+        send_buffers.emplace_back(exchange_id, batch_records);
       }
       return send_buffers;
     }
@@ -343,12 +359,10 @@ public:
       const size_t record_count = send_buffer.size();
       const size_t payload_bytes = record_count * sizeof(Record);
       exchange_->profile_.measure(detail::ProfileOperation::flush, worker_index_, record_count, payload_bytes, [&] {
-        detail::ProgressWorkerScope worker_scope(exchange_->profile_.enabled(), worker_index_);
-        detail::post_send_buffer(dest_rank, send_buffers_[static_cast<size_t>(dest_rank)], exchange_->rank(),
-                                 exchange_->device_for_worker(worker_index_), exchange_->options_.use_loopback,
-                                 exchange_->options_.use_upacket, exchange_->send_counter_,
-                                 detail::remote_completion(*exchange_->runtime_), exchange_->state_,
-                                 exchange_->posted_send_count_, worker_index_);
+        detail::ProgressWorkerScope worker_scope(profiling_enabled_, worker_index_);
+        detail::post_send_buffer(dest_rank, send_buffers_[static_cast<size_t>(dest_rank)], rank_, device_,
+                                 use_loopback_, use_upacket_, exchange_->send_counter_, remote_completion_,
+                                 exchange_->state_, exchange_->posted_send_count_, worker_index_);
       });
     }
 
@@ -380,6 +394,14 @@ public:
 
     AmExchange* exchange_ = nullptr;
     size_t worker_index_ = 0;
+    int rank_count_ = 0;
+    int rank_ = 0;
+    lci::device_t device_;
+    bool profiling_enabled_ = false;
+    bool use_upacket_ = true;
+    bool use_loopback_ = true;
+    size_t bytes_per_buffer_ = 0;
+    lci::rcomp_t remote_completion_ = 0;
     std::vector<detail::SendBuffer<Record>> send_buffers_;
     void* fallback_storage_ = nullptr;
   };
