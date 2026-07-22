@@ -6,12 +6,46 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <mutex>
+#include <type_traits>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 
 namespace lci_irregular {
+
+// A callback-scoped typed view over an active-message payload. The underlying
+// packet contains byte storage, so records are loaded by value instead of being
+// exposed through a Record pointer.
+template <typename Record> class RecordBatchView {
+  static_assert(std::is_trivially_copyable<Record>::value, "Record must be trivially copyable");
+  static_assert(std::is_trivially_default_constructible<Record>::value,
+                "Record must be trivially default constructible under C++17");
+
+public:
+  RecordBatchView(const void* bytes, size_t count) noexcept
+      : bytes_(static_cast<const unsigned char*>(bytes)), count_(count) {}
+
+  size_t size() const noexcept {
+    return count_;
+  }
+
+  bool empty() const noexcept {
+    return count_ == 0;
+  }
+
+  // Requires index < size().
+  Record operator[](size_t index) const noexcept {
+    Record record{};
+    std::memcpy(&record, bytes_ + index * sizeof(Record), sizeof(Record));
+    return record;
+  }
+
+private:
+  const unsigned char* bytes_;
+  size_t count_;
+};
 
 // Runtime-level LCI resource tuning. Applications decide how workers share
 // devices; this library does not create or query application threads.

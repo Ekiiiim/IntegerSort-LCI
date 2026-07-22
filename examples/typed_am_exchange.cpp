@@ -22,12 +22,13 @@ int main() {
 
   lci_irregular::IrregularRuntime runtime(runtime_options);
   std::atomic<size_t> received_count{0};
-  auto receive_batch = [&](const Record* records, size_t count, int source_rank) noexcept {
-    for (size_t i = 0; i < count; ++i) {
+  auto receive_batch = [&](lci_irregular::RecordBatchView<Record> records, int source_rank) noexcept {
+    for (size_t i = 0; i < records.size(); ++i) {
+      Record record = records[i];
       std::printf("rank %d received key=%llu value=%.1f from rank %d\n", runtime.rank(),
-                  static_cast<unsigned long long>(records[i].key), records[i].value, source_rank);
+                  static_cast<unsigned long long>(record.key), record.value, source_rank);
     }
-    received_count.fetch_add(count, std::memory_order_relaxed);
+    received_count.fetch_add(records.size(), std::memory_order_relaxed);
   };
   auto is_done = [&]() noexcept { return received_count.load(std::memory_order_relaxed) == 1; };
 

@@ -61,10 +61,12 @@ struct Record {
 lci_irregular::IrregularRuntime runtime;
 std::atomic<std::size_t> received{0};
 
-auto receive_batch = [&](const Record* records, std::size_t count,
+auto receive_batch = [&](lci_irregular::RecordBatchView<Record> records,
                          int source_rank) noexcept {
-  process_records(records, count, source_rank); // Must be thread-safe.
-  received.fetch_add(count, std::memory_order_relaxed);
+  for (std::size_t i = 0; i < records.size(); ++i) {
+    process_record(records[i], source_rank); // Must be thread-safe.
+  }
+  received.fetch_add(records.size(), std::memory_order_relaxed);
 };
 auto is_done = [&]() noexcept {
   return received.load(std::memory_order_relaxed) == expected_records;
@@ -83,6 +85,10 @@ while (!exchange.is_done()) {
 }
 exchange.wait();
 ```
+
+`RecordBatchView` reads typed record values directly from the received packet
+without materializing a second array. The view is valid only during the receive
+callback; copy any records that must be retained after the callback returns.
 
 `am_exchange_counted` is the blocking convenience API when completion is an expected receive-record count. `am_exchange_until` accepts a general completion callback. Both return an `AmExchangeProfile` value and include a registration barrier, so every runtime rank must call them in the same order. They collectively preflight input pointers, routes, and batch-size options, so a validation error on one rank is reported on every rank before registration. Callable construction must not throw; resource exhaustion while starting a distributed exchange is not recoverable by this interface.
 

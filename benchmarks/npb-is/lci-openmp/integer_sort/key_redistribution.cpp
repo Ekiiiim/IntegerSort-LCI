@@ -28,12 +28,12 @@ lci_irregular::AmExchangeProfile redistribute_keys_with_active_messages(lci_irre
   auto route_key = [&](KeyValue key) { return bucket_to_rank[key >> bucket_shift]; };
 
   std::atomic<size_t> received_count{0};
-  auto receive_keys = [&](const KeyValue* received_keys, size_t count, int source_rank) {
+  auto receive_keys = [&](lci_irregular::RecordBatchView<KeyValue> received_keys, int source_rank) {
     (void)source_rank;
-    for (size_t i = 0; i < count; ++i) {
+    for (size_t i = 0; i < received_keys.size(); ++i) {
       frequency_histogram[received_keys[i]].fetch_add(1, std::memory_order_relaxed);
     }
-    received_count.fetch_add(count, std::memory_order_relaxed);
+    received_count.fetch_add(received_keys.size(), std::memory_order_relaxed);
   };
   auto is_done = [&]() {
     return received_count.load(std::memory_order_relaxed) >= static_cast<size_t>(expected_recv_count);

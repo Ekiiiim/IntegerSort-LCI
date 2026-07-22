@@ -15,7 +15,6 @@
 #include <cstring>
 #include <exception>
 #include <limits>
-#include <memory>
 #include <new>
 #include <optional>
 #include <stdexcept>
@@ -80,15 +79,9 @@ private:
 
     const char* bytes = static_cast<const char*>(message);
     const void* payload = static_cast<const void*>(bytes + header_bytes<Record>());
-    // C++17 memcpy storage does not itself start Record object lifetimes.
-    std::unique_ptr<Record[]> records;
-    if (header.record_count != 0) {
-      records.reset(new Record[header.record_count]);
-      std::memcpy(records.get(), payload, header.record_count * sizeof(Record));
-    }
 
     const auto start = std::chrono::steady_clock::now();
-    receive_batch_(records.get(), header.record_count, source_rank);
+    receive_batch_(RecordBatchView<Record>(payload, header.record_count), source_rank);
     profile_.record(loopback ? ProfileOperation::loopback_receive : ProfileOperation::remote_receive, worker_index,
                     header.record_count, header.record_count * sizeof(Record), elapsed_nanoseconds(start));
   }
@@ -557,9 +550,9 @@ AmExchangeProfile IrregularRuntime::am_exchange_counted(const Record* records, s
                                                         ReceiveBatch receive_batch, size_t expected_recv_count,
                                                         AmExchangeOptions options) {
   std::atomic<size_t> received_count{0};
-  auto counted_receive = [&](const Record* batch, size_t batch_count, int source_rank) {
-    receive_batch(batch, batch_count, source_rank);
-    received_count.fetch_add(batch_count, std::memory_order_relaxed);
+  auto counted_receive = [&](RecordBatchView<Record> batch, int source_rank) {
+    receive_batch(batch, source_rank);
+    received_count.fetch_add(batch.size(), std::memory_order_relaxed);
   };
   auto is_done = [&]() { return received_count.load(std::memory_order_relaxed) >= expected_recv_count; };
   return am_exchange_until<Record>(records, count, route_record, counted_receive, is_done, options);
