@@ -50,7 +50,7 @@ Application code needs one include:
 
 ## Typed Active-Message Exchange
 
-Records must be trivially copyable, trivially default constructible, and have alignment no greater than `std::max_align_t`. The receive and completion callbacks must not throw.
+Records must be trivially copyable, trivially default constructible, trivially move constructible, and have alignment no greater than `std::max_align_t`. The receive and completion callbacks must not throw.
 
 ```cpp
 struct Record {

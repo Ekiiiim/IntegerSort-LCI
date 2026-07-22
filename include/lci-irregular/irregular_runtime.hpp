@@ -22,6 +22,8 @@ template <typename Record> class RecordBatchView {
   static_assert(std::is_trivially_copyable<Record>::value, "Record must be trivially copyable");
   static_assert(std::is_trivially_default_constructible<Record>::value,
                 "Record must be trivially default constructible under C++17");
+  static_assert(std::is_trivially_move_constructible<Record>::value,
+                "Record must be trivially move constructible under C++17");
 
 public:
   RecordBatchView(const void* bytes, size_t count) noexcept

@@ -20,13 +20,18 @@ void am_handler(lci::status_t status) noexcept {
 
     AmMessageHeader header{};
     std::memcpy(&header, status.get_buffer(), sizeof(header));
-    AmExchangeStateBase* state = find_exchange(active_runtime(), header.exchange_id);
+    IrregularRuntime& runtime = active_runtime();
+    AmExchangeStateBase* state = find_exchange(runtime, header.exchange_id);
     if (state == nullptr) {
       std::fprintf(stderr, "Received LCI irregular AM for inactive exchange id %u\n", header.exchange_id);
       std::abort();
     }
 
-    state->receive_message(status.get_rank(), status.get_buffer(), status.get_size(), false, progress_worker());
+    std::optional<size_t> worker_index;
+    if (runtime.profiling_enabled()) {
+      worker_index = progress_worker();
+    }
+    state->receive_message(status.get_rank(), status.get_buffer(), status.get_size(), false, worker_index);
     lci::put_upacket(status.get_buffer());
   } catch (const std::exception& error) {
     std::fprintf(stderr, "LCI irregular AM handler terminated after exception: %s\n", error.what());
