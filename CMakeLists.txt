@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.15)
 project(
   LCIIrregular
   VERSION 1.0.0
-  LANGUAGES C CXX)
+  LANGUAGES CXX)
 
 option(LCI_IRREGULAR_BUILD_EXAMPLES "Build lci-irregular examples" OFF)
 option(LCI_IRREGULAR_BUILD_BENCHMARKS "Build NPB IS research benchmarks" OFF)
@@ -60,6 +60,7 @@ if(LCI_IRREGULAR_BUILD_EXAMPLES)
 endif()
 
 if(LCI_IRREGULAR_BUILD_BENCHMARKS)
+  enable_language(C)
   list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
   add_subdirectory(benchmarks)
 endif()

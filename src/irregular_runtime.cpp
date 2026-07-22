@@ -29,14 +29,34 @@ IrregularRuntime::IrregularRuntime(IrregularRuntimeOptions options) : profiling_
     throw std::logic_error("IrregularRuntime supports only one live instance per process");
   }
 
-  lci::g_runtime_init_x().alloc_default_device(false)();
-  rank_ = lci::get_rank_me();
-  rank_count_ = lci::get_rank_n();
-  allocate_devices(options);
-  am_handler_ = lci::alloc_handler_x(detail::am_handler).zero_copy_am(true)();
-  am_rcomp_ = lci::register_rcomp(am_handler_);
-  g_active_runtime = this;
-  barrier();
+  bool lci_initialized = false;
+  try {
+    lci::g_runtime_init_x().alloc_default_device(false)();
+    lci_initialized = true;
+    rank_ = lci::get_rank_me();
+    rank_count_ = lci::get_rank_n();
+    allocate_devices(options);
+    am_handler_ = lci::alloc_handler_x(detail::am_handler).zero_copy_am(true)();
+    am_rcomp_ = lci::register_rcomp(am_handler_);
+    g_active_runtime = this;
+    barrier();
+  } catch (...) {
+    if (g_active_runtime == this) {
+      g_active_runtime = nullptr;
+    }
+    if (am_rcomp_ != 0) {
+      lci::deregister_rcomp(am_rcomp_);
+      am_rcomp_ = 0;
+    }
+    if (!am_handler_.is_empty()) {
+      lci::free_comp(&am_handler_);
+    }
+    free_devices();
+    if (lci_initialized) {
+      lci::g_runtime_fina();
+    }
+    throw;
+  }
 }
 
 IrregularRuntime::~IrregularRuntime() {
@@ -139,8 +159,15 @@ void IrregularRuntime::free_devices() {
 
 uint32_t IrregularRuntime::register_exchange(detail::AmExchangeStateBase* state) {
   std::lock_guard<std::mutex> lock(exchange_mutex_);
-  uint32_t exchange_id = next_exchange_id_++;
-  exchanges_[exchange_id] = state;
+  if (next_exchange_id_ == 0) {
+    throw std::overflow_error("LCI irregular AM exchange id space exhausted");
+  }
+  const uint32_t exchange_id = next_exchange_id_;
+  const auto result = exchanges_.emplace(exchange_id, state);
+  if (!result.second) {
+    throw std::logic_error("LCI irregular AM exchange id is already active");
+  }
+  ++next_exchange_id_;
   return exchange_id;
 }
 

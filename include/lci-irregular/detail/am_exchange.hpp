@@ -13,7 +13,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <exception>
 #include <limits>
+#include <memory>
 #include <new>
 #include <optional>
 #include <stdexcept>
@@ -78,21 +80,15 @@ private:
 
     const char* bytes = static_cast<const char*>(message);
     const void* payload = static_cast<const void*>(bytes + header_bytes<Record>());
-    void* aligned_payload = nullptr;
-    const Record* records = static_cast<const Record*>(payload);
-    if (reinterpret_cast<uintptr_t>(payload) % alignof(Record) != 0) {
-      aligned_payload = std::malloc(header.record_count * sizeof(Record));
-      if (aligned_payload == nullptr && header.record_count != 0) {
-        std::fprintf(stderr, "LCI irregular receive buffer allocation failed\n");
-        std::terminate();
-      }
-      std::memcpy(aligned_payload, payload, header.record_count * sizeof(Record));
-      records = static_cast<const Record*>(aligned_payload);
+    // C++17 memcpy storage does not itself start Record object lifetimes.
+    std::unique_ptr<Record[]> records;
+    if (header.record_count != 0) {
+      records.reset(new Record[header.record_count]);
+      std::memcpy(records.get(), payload, header.record_count * sizeof(Record));
     }
 
     const auto start = std::chrono::steady_clock::now();
-    receive_batch_(records, header.record_count, source_rank);
-    std::free(aligned_payload);
+    receive_batch_(records.get(), header.record_count, source_rank);
     profile_.record(loopback ? ProfileOperation::loopback_receive : ProfileOperation::remote_receive, worker_index,
                     header.record_count, header.record_count * sizeof(Record), elapsed_nanoseconds(start));
   }
@@ -236,6 +232,8 @@ template <typename Record> size_t choose_batch_records(AmExchangeOptions options
 
 template <typename Record, typename ReceiveBatch, typename IsDone> class AmExchange {
   static_assert(std::is_trivially_copyable<Record>::value, "Record must be trivially copyable");
+  static_assert(std::is_trivially_default_constructible<Record>::value,
+                "Record must be trivially default constructible under C++17");
   static_assert(alignof(Record) <= alignof(std::max_align_t),
                 "Record alignment greater than max_align_t is not supported");
 
@@ -251,10 +249,22 @@ public:
           throw std::bad_alloc();
         }
       }
+      exchange_->active_sender_count_.fetch_add(1, std::memory_order_relaxed);
     }
 
-    ~Sender() {
-      cleanup();
+    ~Sender() noexcept {
+      if (exchange_ == nullptr) {
+        return;
+      }
+      try {
+        close();
+      } catch (const std::exception& error) {
+        std::fprintf(stderr, "LCI irregular AM sender cleanup terminated after exception: %s\n", error.what());
+        std::terminate();
+      } catch (...) {
+        std::fprintf(stderr, "LCI irregular AM sender cleanup terminated after unknown exception\n");
+        std::terminate();
+      }
     }
 
     Sender(const Sender&) = delete;
@@ -279,6 +289,18 @@ public:
       other.exchange_ = nullptr;
       other.fallback_storage_ = nullptr;
       return *this;
+    }
+
+    // Flush buffered records and release this sender from its exchange.
+    void close() {
+      validate_active();
+      try {
+        flush();
+      } catch (...) {
+        release();
+        throw;
+      }
+      release();
     }
 
     void am_send(int dest_rank, const Record& record) {
@@ -345,13 +367,24 @@ public:
       }
     }
 
-    void cleanup() {
+    void release() noexcept {
       if (exchange_ != nullptr) {
-        flush();
+        exchange_->active_sender_count_.fetch_sub(1, std::memory_order_relaxed);
       }
       std::free(fallback_storage_);
       fallback_storage_ = nullptr;
       exchange_ = nullptr;
+    }
+
+    void cleanup() noexcept {
+      if (exchange_ == nullptr) {
+        return;
+      }
+      try {
+        close();
+      } catch (...) {
+        std::terminate();
+      }
     }
 
     AmExchange* exchange_ = nullptr;
@@ -365,15 +398,25 @@ public:
         profile_(runtime.profiling_enabled(), runtime.profiling_worker_count(), 0, options.profile_name),
         state_(receive_batch_, profile_), options_(options),
         batch_records_(detail::choose_batch_records<Record>(options)),
-        bytes_per_buffer_(detail::message_bytes<Record>(batch_records_)), send_counter_(lci::alloc_counter()) {
-    lci::counter_set(send_counter_, 0);
-    exchange_id_ = detail::register_exchange(runtime, &state_);
-    state_.set_exchange_id(exchange_id_);
-    profile_.set_exchange_sequence(exchange_id_);
-    registered_ = true;
+        bytes_per_buffer_(detail::message_bytes<Record>(batch_records_)) {
+    send_counter_ = lci::alloc_counter();
+    try {
+      lci::counter_set(send_counter_, 0);
+      exchange_id_ = detail::register_exchange(runtime, &state_);
+      state_.set_exchange_id(exchange_id_);
+      profile_.set_exchange_sequence(exchange_id_);
+      registered_ = true;
+    } catch (...) {
+      lci::free_comp(&send_counter_);
+      throw;
+    }
   }
 
   ~AmExchange() {
+    if (active_sender_count_.load(std::memory_order_relaxed) != 0) {
+      std::fprintf(stderr, "LCI irregular AM exchange destroyed with active senders\n");
+      std::terminate();
+    }
     if (!is_complete_without_progress()) {
       std::fprintf(stderr, "LCI irregular AM exchange destroyed before completion\n");
       std::terminate();
@@ -417,6 +460,7 @@ public:
   // No other sender or progress worker may operate on this exchange while
   // wait() or profile() finalizes its statistics and lifetime state.
   void wait() {
+    validate_no_active_senders();
     while (!is_done()) {
       progress();
     }
@@ -424,6 +468,7 @@ public:
   }
 
   AmExchangeProfile profile() {
+    validate_no_active_senders();
     if (!is_complete_without_progress()) {
       throw std::logic_error("LCI irregular AM profile requested before exchange completion");
     }
@@ -471,6 +516,12 @@ private:
     }
   }
 
+  void validate_no_active_senders() const {
+    if (active_sender_count_.load(std::memory_order_relaxed) != 0) {
+      throw std::logic_error("LCI irregular AM senders must be closed before exchange finalization");
+    }
+  }
+
   void finalize_profile_once() {
     std::call_once(profile_finalize_once_, [this] {
       if (profile_.enabled()) {
@@ -489,6 +540,7 @@ private:
   size_t bytes_per_buffer_ = 0;
   lci::comp_t send_counter_ = nullptr;
   std::atomic<size_t> posted_send_count_{0};
+  std::atomic<size_t> active_sender_count_{0};
   uint32_t exchange_id_ = 0;
   bool registered_ = false;
   std::once_flag profile_finalize_once_;
@@ -517,17 +569,51 @@ template <typename Record, typename RouteRecord, typename ReceiveBatch, typename
 AmExchangeProfile IrregularRuntime::am_exchange_until(const Record* records, size_t count, RouteRecord route_record,
                                                       ReceiveBatch receive_batch, IsDone is_done,
                                                       AmExchangeOptions options) {
-  if (records == nullptr && count != 0) {
-    throw std::invalid_argument("LCI irregular AM exchange received null records with nonzero count");
+  std::vector<int> destinations;
+  std::exception_ptr preflight_error;
+  try {
+    (void)detail::choose_batch_records<Record>(options);
+    if (records == nullptr && count != 0) {
+      throw std::invalid_argument("LCI irregular AM exchange received null records with nonzero count");
+    }
+    destinations.reserve(count);
+    for (size_t i = 0; i < count; ++i) {
+      const int destination = route_record(records[i]);
+      if (destination < 0 || destination >= rank_count()) {
+        throw std::invalid_argument("LCI irregular AM route returned an invalid destination rank");
+      }
+      destinations.push_back(destination);
+    }
+  } catch (...) {
+    preflight_error = std::current_exception();
+  }
+
+  const int local_preflight_failure = preflight_error == nullptr ? 0 : 1;
+  int preflight_failure_count = 0;
+  auto sum_int = [](const void* left, const void* right, void* output, size_t element_count) {
+    const int* left_values = static_cast<const int*>(left);
+    const int* right_values = static_cast<const int*>(right);
+    int* output_values = static_cast<int*>(output);
+    for (size_t i = 0; i < element_count; ++i) {
+      output_values[i] = left_values[i] + right_values[i];
+    }
+  };
+  reduce(&local_preflight_failure, &preflight_failure_count, 1, sizeof(int), sum_int, 0);
+  broadcast_int(&preflight_failure_count, 0);
+  if (preflight_failure_count != 0) {
+    if (preflight_error != nullptr) {
+      std::rethrow_exception(preflight_error);
+    }
+    throw std::runtime_error("LCI irregular AM exchange preflight failed on another rank");
   }
 
   auto exchange = am_exchange_start<Record>(std::move(receive_batch), std::move(is_done), options);
   barrier();
   auto sender = exchange.make_sender();
   for (size_t i = 0; i < count; ++i) {
-    sender.am_send(route_record(records[i]), records[i]);
+    sender.am_send(destinations[i], records[i]);
   }
-  sender.flush();
+  sender.close();
   exchange.wait();
   return exchange.profile();
 }

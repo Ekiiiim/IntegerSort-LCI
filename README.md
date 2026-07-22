@@ -50,7 +50,7 @@ Application code needs one include:
 
 ## Typed Active-Message Exchange
 
-Records must be trivially copyable and have alignment no greater than `std::max_align_t`. The receive and completion callbacks must not throw.
+Records must be trivially copyable, trivially default constructible, and have alignment no greater than `std::max_align_t`. The receive and completion callbacks must not throw.
 
 ```cpp
 struct Record {
@@ -76,7 +76,7 @@ auto sender = exchange.make_sender(worker_index);
 for (const Record& record : local_records) {
   sender.am_send(destination_for(record), record);
 }
-sender.flush();
+sender.close();
 
 while (!exchange.is_done()) {
   exchange.progress(worker_index);
@@ -84,7 +84,7 @@ while (!exchange.is_done()) {
 exchange.wait();
 ```
 
-`am_exchange_counted` is the blocking convenience API when completion is an expected receive-record count. `am_exchange_until` accepts a general completion callback. Both return an `AmExchangeProfile` value and include a registration barrier, so every runtime rank must call them in the same order.
+`am_exchange_counted` is the blocking convenience API when completion is an expected receive-record count. `am_exchange_until` accepts a general completion callback. Both return an `AmExchangeProfile` value and include a registration barrier, so every runtime rank must call them in the same order. They collectively preflight input pointers, routes, and batch-size options, so a validation error on one rank is reported on every rank before registration. Callable construction must not throw; resource exhaustion while starting a distributed exchange is not recoverable by this interface.
 
 ## Threading and Progress
 
@@ -94,7 +94,7 @@ Each sender belongs to one worker and is not shared concurrently. Different work
 
 Participating ranks must create exchanges in the same order and complete application phase synchronization before the first send. This keeps the nonblocking start operation free of an implicit global barrier while ensuring that a remote active message cannot arrive before its exchange is registered.
 
-All senders must be flushed and all other sender/progress workers must stop operating on the exchange before one thread calls `wait()` or `profile()`. An exchange must complete before destruction. `wait()` is the blocking completion operation; `is_done()` and `progress()` support integration with an application's own scheduling loop.
+All senders must be closed or destroyed and all other progress workers must stop operating on the exchange before one thread calls `wait()` or `profile()`. An exchange must complete before destruction. `wait()` is the blocking completion operation; `is_done()` and `progress()` support integration with an application's own scheduling loop. Errors raised after a nonblocking exchange has started must be handled while the exchange remains in scope so the application can still complete it; this interface does not provide distributed cancellation.
 
 ## Profiling
 

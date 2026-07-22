@@ -40,6 +40,7 @@ lci_irregular::AmExchangeProfile redistribute_keys_with_active_messages(lci_irre
   };
 
   auto exchange = runtime.am_exchange_start<KeyValue>(receive_keys, is_done, options);
+  runtime.barrier();
 
   #pragma omp parallel
   {
@@ -52,7 +53,7 @@ lci_irregular::AmExchangeProfile redistribute_keys_with_active_messages(lci_irre
       sender.am_send(route_key(key), key);
     }
 
-    sender.flush();
+    sender.close();
     while (!exchange.is_done()) {
       exchange.progress(worker_index);
     }

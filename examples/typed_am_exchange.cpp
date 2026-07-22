@@ -38,7 +38,7 @@ int main() {
   auto sender = exchange.make_sender(0);
   const int destination = (runtime.rank() + 1) % runtime.rank_count();
   sender.am_send(destination, Record{static_cast<uint64_t>(runtime.rank()), runtime.rank() + 0.5});
-  sender.flush();
+  sender.close();
   exchange.wait();
 
   const auto profile = exchange.profile();

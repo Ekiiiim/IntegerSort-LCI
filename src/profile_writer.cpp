@@ -95,13 +95,23 @@ void IrregularRuntime::write_profiles() {
   const std::filesystem::path directory(profiling_options_.output_directory);
   const std::filesystem::path output_path =
       directory / (profiling_options_.file_prefix + ".rank-" + std::to_string(rank_) + ".jsonl");
+  const std::filesystem::path temporary_path = output_path.string() + ".tmp";
 
   try {
     std::filesystem::create_directories(directory);
-    const auto mode = std::ios::out | (profile_output_started_ ? std::ios::app : std::ios::trunc);
-    std::ofstream output(output_path, mode);
+    std::ofstream output(temporary_path, std::ios::out | std::ios::trunc);
     if (!output) {
-      throw std::runtime_error("unable to open output file");
+      throw std::runtime_error("unable to open temporary output file");
+    }
+    if (profile_output_started_) {
+      std::ifstream previous(output_path, std::ios::in);
+      if (!previous) {
+        throw std::runtime_error("unable to read existing output file");
+      }
+      output << previous.rdbuf();
+      if (!output || previous.bad()) {
+        throw std::runtime_error("unable to copy existing output file");
+      }
     }
 
     for (const auto& profile : profiles) {
@@ -113,10 +123,13 @@ void IrregularRuntime::write_profiles() {
     }
     output.close();
     if (!output) {
-      throw std::runtime_error("unable to complete output file");
+      throw std::runtime_error("unable to complete temporary output file");
     }
+    std::filesystem::rename(temporary_path, output_path);
     profile_output_started_ = true;
   } catch (const std::exception& error) {
+    std::error_code remove_error;
+    std::filesystem::remove(temporary_path, remove_error);
     std::lock_guard<std::mutex> queue_lock(profile_mutex_);
     pending_profiles_.insert(pending_profiles_.begin(), std::make_move_iterator(profiles.begin()),
                              std::make_move_iterator(profiles.end()));

@@ -75,6 +75,8 @@ public:
   // exchange lifetime; applications create per-worker senders and decide how
   // those workers are scheduled. Participating ranks must create exchanges in
   // the same order and complete phase synchronization before the first send.
+  // Every sender must be closed or destroyed before wait(), profile(), or the
+  // exchange itself.
   template <typename Record, typename ReceiveBatch, typename IsDone>
   AmExchange<Record, ReceiveBatch, IsDone> am_exchange_start(ReceiveBatch receive_batch, IsDone is_done,
                                                              AmExchangeOptions options = {});
