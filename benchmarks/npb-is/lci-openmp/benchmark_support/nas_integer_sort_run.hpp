@@ -63,6 +63,7 @@ private:
 
   FullVerifySnapshot final_snapshot_{};
   BucketPlan current_bucket_plan_{};
+  lci_irregular::AmExchangeProfile current_redistribution_profile_{};
   std::unique_ptr<IntegerSortWorkspace> workspace_;
 };
 

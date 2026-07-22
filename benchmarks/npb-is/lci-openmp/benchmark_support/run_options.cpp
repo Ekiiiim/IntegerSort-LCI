@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 
 namespace {
 
@@ -48,6 +49,11 @@ int read_threads_per_device_option() {
   return atoi(env_val);
 }
 
+std::string read_env_or_default(const char* name, const char* default_value) {
+  const char* value = getenv(name);
+  return value == nullptr || *value == '\0' ? default_value : value;
+}
+
 } // namespace
 
 namespace is_lci {
@@ -60,13 +66,21 @@ int read_loopback_flag() {
   return read_bool_env_flag("LOOPBACK", 1);
 }
 
-int read_lci_device_count_option() {
+lci_irregular::IrregularRuntimeOptions read_lci_runtime_options() {
+  lci_irregular::IrregularRuntimeOptions options;
   int threads_per_device = read_threads_per_device_option();
   if (threads_per_device <= 0) {
-    return 1;
+    threads_per_device = 1;
   }
 
-  return std::max(1, benchmark_thread_count() / threads_per_device);
+  options.device_count = std::max(1, benchmark_thread_count() / threads_per_device);
+#ifdef IS_LCI_ENABLE_TIMERS
+  options.profiling.enabled = true;
+  options.profiling.worker_count = static_cast<size_t>(benchmark_thread_count());
+  options.profiling.output_directory = read_env_or_default("LCI_IRREGULAR_PROFILE_DIR", "profiles");
+  options.profiling.file_prefix = "npb-is-lci";
+#endif
+  return options;
 }
 
 } // namespace is_lci

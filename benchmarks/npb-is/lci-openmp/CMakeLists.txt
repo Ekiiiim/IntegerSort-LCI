@@ -11,7 +11,7 @@ endif()
 
 message(STATUS "Building LCI version of IS benchmark")
 
-option(IS_LCI_ENABLE_TIMERS "Enable LCI alltoall thread-local timer profiling (verbose per-iteration output; off by default)" OFF)
+option(IS_LCI_ENABLE_TIMERS "Enable LCI irregular AM profiling and per-iteration reports" OFF)
 
 foreach(CLASS ${NPB_CLASSES})
   set(TARGET_NAME is_lci_${CLASS})
@@ -21,7 +21,7 @@ foreach(CLASS ${NPB_CLASSES})
     nas/timers.cpp
     benchmark_support/nas_integer_sort_run.cpp
     benchmark_support/run_options.cpp
-    profiling/a2a_thread_profile.cpp
+    profiling/a2a_profile_report.cpp
     benchmark_support/reduction_operations.cpp
     integer_sort/bucket_plan.cpp
     integer_sort/key_redistribution.cpp
@@ -40,7 +40,7 @@ foreach(CLASS ${NPB_CLASSES})
 
   # Compile definitions
   if(IS_LCI_ENABLE_TIMERS)
-    target_compile_definitions(${TARGET_NAME} PRIVATE A2A_TL_TIMERS)
+    target_compile_definitions(${TARGET_NAME} PRIVATE IS_LCI_ENABLE_TIMERS=1)
   endif()
   set_npb_definitions(${TARGET_NAME} ${CLASS})
 

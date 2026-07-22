@@ -11,10 +11,11 @@
 #include "nas/run_rules.hpp"
 #include "nas/timers.hpp"
 #include "nas/verification.hpp"
-#include "profiling/a2a_thread_profile.hpp"
+#include "profiling/a2a_profile_report.hpp"
 
 #include <cstdio>
 #include <cstdlib>
+#include <string>
 
 namespace {
 
@@ -163,9 +164,7 @@ void NasIntegerSortRun::redistribute_keys_with_lci() {
   int bucket_shift = MAX_KEY_LOG_2 - NUM_BUCKETS_LOG_2;
 
   timer_start_if_enabled(T_RCOMM);
-  begin_thread_local_alltoall_timers();
-
-  redistribute_keys_with_active_messages(
+  current_redistribution_profile_ = redistribute_keys_with_active_messages(
       runtime_, workspace().keys(), workspace().local_key_count(), workspace().bucket_to_rank(), bucket_shift,
       current_bucket_plan_.expected_recv_count, workspace().frequency_by_key(current_bucket_plan_.min_key_value),
       am_exchange_options());
@@ -191,8 +190,10 @@ void NasIntegerSortRun::verify_partial_ranking() {
 }
 
 void NasIntegerSortRun::finish_iteration() {
-  finish_thread_local_alltoall_timers(current_iteration_, runtime_.rank(), current_bucket_plan_.local_key_count,
-                                      read_rank_timer());
+#ifdef IS_LCI_ENABLE_TIMERS
+  print_a2a_profile_report(current_redistribution_profile_, current_iteration_, runtime_.rank(),
+                           current_bucket_plan_.local_key_count, read_rank_timer());
+#endif
 
   if (current_iteration_ == MAX_ITERATIONS) {
     final_snapshot_.frequency_histogram = workspace().frequency_by_key(current_bucket_plan_.min_key_value);
@@ -265,6 +266,7 @@ lci_irregular::AmExchangeOptions NasIntegerSortRun::am_exchange_options() const 
   options.use_upacket = use_upacket_ == 1;
   options.use_loopback = use_loopback_ == 1;
   options.batch_records = 0;
+  options.profile_name = "key-redistribution-iteration-" + std::to_string(current_iteration_);
   return options;
 }
 
