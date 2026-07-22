@@ -71,6 +71,7 @@ auto is_done = [&]() noexcept {
 };
 
 auto exchange = runtime.am_exchange_start<Record>(receive_batch, is_done);
+runtime.barrier(); // All participating ranks have registered this exchange.
 auto sender = exchange.make_sender(worker_index);
 for (const Record& record : local_records) {
   sender.am_send(destination_for(record), record);
@@ -90,6 +91,8 @@ exchange.wait();
 Only one `IrregularRuntime` may be live in a process. The application chooses its worker model and passes `device_count`; the library does not create threads or call OpenMP.
 
 Each sender belongs to one worker and is not shared concurrently. Different workers may use different senders for the same exchange. Indexed `progress(worker_index)` maps workers to LCI devices and enables per-worker profiling. Receive callbacks can run concurrently on threads that call progress, so application state updated by callbacks must be thread-safe.
+
+Participating ranks must create exchanges in the same order and complete application phase synchronization before the first send. This keeps the nonblocking start operation free of an implicit global barrier while ensuring that a remote active message cannot arrive before its exchange is registered.
 
 An exchange must complete before destruction. `wait()` is the blocking completion operation; `is_done()` and `progress()` support integration with an application's own scheduling loop.
 

@@ -73,7 +73,8 @@ public:
 
   // Start a nonblocking active-message exchange. The returned handle owns the
   // exchange lifetime; applications create per-worker senders and decide how
-  // those workers are scheduled.
+  // those workers are scheduled. Participating ranks must create exchanges in
+  // the same order and complete phase synchronization before the first send.
   template <typename Record, typename ReceiveBatch, typename IsDone>
   AmExchange<Record, ReceiveBatch, IsDone> am_exchange_start(ReceiveBatch receive_batch, IsDone is_done,
                                                              AmExchangeOptions options = {});

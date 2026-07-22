@@ -34,6 +34,7 @@ int main() {
   lci_irregular::AmExchangeOptions exchange_options;
   exchange_options.profile_name = "typed-am-exchange";
   auto exchange = runtime.am_exchange_start<Record>(receive_batch, is_done, exchange_options);
+  runtime.barrier();
   auto sender = exchange.make_sender(0);
   const int destination = (runtime.rank() + 1) % runtime.rank_count();
   sender.am_send(destination, Record{static_cast<uint64_t>(runtime.rank()), runtime.rank() + 0.5});
