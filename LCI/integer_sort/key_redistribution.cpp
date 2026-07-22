@@ -1,9 +1,9 @@
 #include "integer_sort/key_redistribution.hpp"
 
-#include "irregular/irregular_runtime.hpp"
+#include <lci-irregular/irregular_runtime.hpp>
 
 #ifdef _OPENMP
-  #include <omp.h>
+#include <omp.h>
 #endif
 
 namespace is_lci {
@@ -39,12 +39,12 @@ void redistribute_keys_with_active_messages(lci_irregular::IrregularRuntime& run
 
   auto exchange = runtime.am_exchange_start<KeyValue>(receive_keys, is_done, options);
 
-  #pragma omp parallel
+#pragma omp parallel
   {
     size_t worker_index = current_worker_index();
     auto sender = exchange.make_sender(worker_index);
 
-    #pragma omp for nowait
+#pragma omp for nowait
     for (KeyCount i = 0; i < local_key_count; ++i) {
       KeyValue key = keys[i];
       sender.am_send(route_key(key), key);

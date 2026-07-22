@@ -16,7 +16,7 @@
 #include "nas/timers.hpp"
 
 #include "c_timers.h"
-#include "irregular/irregular_runtime.hpp"
+#include <lci-irregular/irregular_runtime.hpp>
 
 #ifndef NO_MTIMERS
 #include "communication/reductions.hpp"
@@ -107,7 +107,7 @@ bool timer_enabled() {
 }
 
 void clear_timers() {
-  #pragma omp parallel for schedule(static)
+#pragma omp parallel for schedule(static)
   for (int i = 1; i <= T_LAST; i++) {
     timer_clear(i);
   }
@@ -145,7 +145,7 @@ void timer_stop_if_enabled(int timer_id) {
 void print_timer_summary(int comm_size, const lci_irregular::IrregularRuntime& runtime) {
   double t1[T_LAST + 1], tmin[T_LAST + 1], tsum[T_LAST + 1], tmax[T_LAST + 1];
 
-  #pragma omp parallel for schedule(static)
+#pragma omp parallel for schedule(static)
   for (int i = 0; i <= T_LAST; i++) {
     t1[i] = timer_read(i);
   }

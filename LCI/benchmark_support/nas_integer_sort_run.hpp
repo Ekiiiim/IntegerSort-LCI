@@ -1,6 +1,6 @@
 #pragma once
 
-#include "irregular/am_exchange_options.hpp"
+#include <lci-irregular/irregular_runtime.hpp>
 #include "integer_sort/bucket_plan.hpp"
 #include "integer_sort/workspace.hpp"
 #include "nas/verification.hpp"

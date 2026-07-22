@@ -1,4 +1,4 @@
-#include "irregular/irregular_runtime.hpp"
+#include <lci-irregular/irregular_runtime.hpp>
 
 #include <algorithm>
 #include <cstdio>

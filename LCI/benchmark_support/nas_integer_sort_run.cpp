@@ -6,7 +6,7 @@
 #include "communication/reductions.hpp"
 #include "integer_sort/key_redistribution.hpp"
 #include "integer_sort/ranking.hpp"
-#include "irregular/irregular_runtime.hpp"
+#include <lci-irregular/irregular_runtime.hpp>
 #include "nas/key_generation.hpp"
 #include "nas/problem_config.hpp"
 #include "nas/run_rules.hpp"
@@ -146,11 +146,10 @@ void NasIntegerSortRun::redistribute_keys_with_lci() {
   timer_start_if_enabled(T_RCOMM);
   begin_thread_local_alltoall_timers();
 
-  redistribute_keys_with_active_messages(runtime_, workspace().keys(), workspace().local_key_count(),
-                                         workspace().bucket_to_rank(), bucket_shift,
-                                         current_bucket_plan_.expected_recv_count,
-                                         workspace().frequency_by_key(current_bucket_plan_.min_key_value),
-                                         am_exchange_options());
+  redistribute_keys_with_active_messages(
+      runtime_, workspace().keys(), workspace().local_key_count(), workspace().bucket_to_rank(), bucket_shift,
+      current_bucket_plan_.expected_recv_count, workspace().frequency_by_key(current_bucket_plan_.min_key_value),
+      am_exchange_options());
 
   timer_stop_if_enabled(T_RCOMM);
 }

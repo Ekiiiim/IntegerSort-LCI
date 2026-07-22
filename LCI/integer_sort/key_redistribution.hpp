@@ -1,6 +1,6 @@
 #pragma once
 
-#include "irregular/am_exchange_options.hpp"
+#include <lci-irregular/irregular_runtime.hpp>
 #include "types.hpp"
 
 #include <atomic>
@@ -15,8 +15,7 @@ namespace is_lci {
 // irregular active-message interface.
 void redistribute_keys_with_active_messages(lci_irregular::IrregularRuntime& runtime, const KeyValue* keys,
                                             KeyCount local_key_count, const int* bucket_to_rank, int bucket_shift,
-                                            KeyCount expected_recv_count,
-                                            std::atomic<KeyCount>* frequency_histogram,
+                                            KeyCount expected_recv_count, std::atomic<KeyCount>* frequency_histogram,
                                             lci_irregular::AmExchangeOptions options);
 
 } // namespace is_lci

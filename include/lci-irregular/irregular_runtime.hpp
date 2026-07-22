@@ -1,7 +1,5 @@
 #pragma once
 
-#include "irregular/am_exchange_options.hpp"
-
 #include <lci.hpp>
 
 #include <cstddef>
@@ -12,6 +10,21 @@
 #include <vector>
 
 namespace lci_irregular {
+
+// Runtime-level LCI resource tuning. Applications decide how workers share
+// devices; this library does not create or query application threads.
+struct IrregularRuntimeOptions {
+  int device_count = 1;
+  size_t max_sends_per_device = 0;
+  size_t max_recvs_per_device = 0;
+};
+
+// Per-exchange active-message aggregation settings.
+struct AmExchangeOptions {
+  bool use_upacket = true;
+  bool use_loopback = true;
+  size_t batch_records = 0;
+};
 
 class IrregularRuntime;
 template <typename Record, typename ReceiveBatch, typename IsDone> class AmExchange;
@@ -102,4 +115,4 @@ IrregularRuntime& active_runtime();
 
 } // namespace lci_irregular
 
-#include "irregular/detail/am_exchange.hpp"
+#include <lci-irregular/detail/am_exchange.hpp>

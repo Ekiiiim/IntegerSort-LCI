@@ -45,7 +45,7 @@
 
 #include "benchmark_support/nas_integer_sort_run.hpp"
 #include "benchmark_support/run_options.hpp"
-#include "irregular/irregular_runtime.hpp"
+#include <lci-irregular/irregular_runtime.hpp>
 #include "nas/problem_config.hpp"
 
 int main() {

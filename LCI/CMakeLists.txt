@@ -9,35 +9,6 @@ if(NOT OpenMP_FOUND)
   return()
 endif()
 
-find_package(
-  LCI
-  CONFIG
-  HINTS
-  ${LCI_ROOT}
-  $ENV{LCI_ROOT}
-  PATH_SUFFIXES
-  lib/cmake
-  lib64/cmake)
-if(NOT LCI_FOUND)
-  message(STATUS "Existing LCI installation not found. Try FetchContent.")
-  include(FetchContent)
-  FetchContent_Declare(
-    lci
-    GIT_REPOSITORY https://github.com/uiuc-hpc/lci.git
-    GIT_TAG master)
-  FetchContent_MakeAvailable(lci)
-  set(LCI_FOUND TRUE)
-endif()
-
-if(NOT LCI_FOUND)
-  message(WARNING "LCI not found. LCI version of IS benchmark will not be built.")
-  return()
-endif()
-
-if(NOT IS_BUILD_LCI)
-  return()
-endif()
-
 message(STATUS "Building LCI version of IS benchmark")
 
 option(IS_LCI_ENABLE_TIMERS "Enable LCI alltoall thread-local timer profiling (verbose per-iteration output; off by default)" OFF)
@@ -51,8 +22,6 @@ foreach(CLASS ${NPB_CLASSES})
     benchmark_support/nas_integer_sort_run.cpp
     benchmark_support/results.cpp
     benchmark_support/run_options.cpp
-    irregular/irregular_runtime.cpp
-    irregular/detail/am_exchange_state.cpp
     communication/profiling/a2a_thread_profile.cpp
     communication/reductions.cpp
     integer_sort/bucket_plan.cpp
@@ -69,7 +38,7 @@ foreach(CLASS ${NPB_CLASSES})
                                                     ${CMAKE_SOURCE_DIR}/common)
 
   # Link common library
-  target_link_libraries(${TARGET_NAME} PRIVATE common OpenMP::OpenMP_CXX LCI::lci)
+  target_link_libraries(${TARGET_NAME} PRIVATE common OpenMP::OpenMP_CXX LCIIrregular::lci_irregular)
 
   # Compile definitions
   if(IS_LCI_ENABLE_TIMERS)

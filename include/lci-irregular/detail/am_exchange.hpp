@@ -1,6 +1,6 @@
 #pragma once
 
-#include "irregular/detail/am_exchange_state.hpp"
+#include <lci-irregular/detail/am_exchange_state.hpp>
 
 #include <lci.hpp>
 

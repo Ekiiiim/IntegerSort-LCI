@@ -1,6 +1,6 @@
-#include "irregular/detail/am_exchange_state.hpp"
+#include <lci-irregular/detail/am_exchange_state.hpp>
 
-#include "irregular/irregular_runtime.hpp"
+#include <lci-irregular/irregular_runtime.hpp>
 
 #include <cstdio>
 #include <cstdlib>
