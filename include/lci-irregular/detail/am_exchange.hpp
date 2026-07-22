@@ -80,10 +80,9 @@ private:
     const char* bytes = static_cast<const char*>(message);
     const void* payload = static_cast<const void*>(bytes + header_bytes<Record>());
 
-    const auto start = std::chrono::steady_clock::now();
-    receive_batch_(RecordBatchView<Record>(payload, header.record_count), source_rank);
-    profile_.record(loopback ? ProfileOperation::loopback_receive : ProfileOperation::remote_receive, worker_index,
-                    header.record_count, header.record_count * sizeof(Record), elapsed_nanoseconds(start));
+    profile_.measure(loopback ? ProfileOperation::loopback_receive : ProfileOperation::remote_receive, worker_index,
+                     header.record_count, header.record_count * sizeof(Record),
+                     [&] { receive_batch_(RecordBatchView<Record>(payload, header.record_count), source_rank); });
   }
 
   uint32_t exchange_id_ = 0;
@@ -309,7 +308,7 @@ public:
       }
 
       detail::SendBuffer<Record>& send_buffer = send_buffers_[static_cast<size_t>(dest_rank)];
-      detail::ProgressWorkerScope worker_scope(worker_index_);
+      detail::ProgressWorkerScope worker_scope(exchange_->profile_.enabled(), worker_index_);
       send_buffer.push(record, exchange_->device_for_worker(worker_index_), fallback_buffer);
       if (send_buffer.size() == send_buffer.capacity()) {
         flush(dest_rank);
@@ -343,15 +342,14 @@ public:
 
       const size_t record_count = send_buffer.size();
       const size_t payload_bytes = record_count * sizeof(Record);
-      const auto start = std::chrono::steady_clock::now();
-      detail::ProgressWorkerScope worker_scope(worker_index_);
-      detail::post_send_buffer(dest_rank, send_buffers_[static_cast<size_t>(dest_rank)], exchange_->rank(),
-                               exchange_->device_for_worker(worker_index_), exchange_->options_.use_loopback,
-                               exchange_->options_.use_upacket, exchange_->send_counter_,
-                               detail::remote_completion(*exchange_->runtime_), exchange_->state_,
-                               exchange_->posted_send_count_, worker_index_);
-      exchange_->profile_.record(detail::ProfileOperation::flush, worker_index_, record_count, payload_bytes,
-                                 detail::elapsed_nanoseconds(start));
+      exchange_->profile_.measure(detail::ProfileOperation::flush, worker_index_, record_count, payload_bytes, [&] {
+        detail::ProgressWorkerScope worker_scope(exchange_->profile_.enabled(), worker_index_);
+        detail::post_send_buffer(dest_rank, send_buffers_[static_cast<size_t>(dest_rank)], exchange_->rank(),
+                                 exchange_->device_for_worker(worker_index_), exchange_->options_.use_loopback,
+                                 exchange_->options_.use_upacket, exchange_->send_counter_,
+                                 detail::remote_completion(*exchange_->runtime_), exchange_->state_,
+                                 exchange_->posted_send_count_, worker_index_);
+      });
     }
 
     void validate_active() const {
@@ -434,16 +432,12 @@ public:
   }
 
   void progress() {
-    const auto start = std::chrono::steady_clock::now();
-    runtime_->progress();
-    profile_.record(detail::ProfileOperation::progress, std::nullopt, 0, 0, detail::elapsed_nanoseconds(start));
+    profile_.measure(detail::ProfileOperation::progress, std::nullopt, 0, 0, [&] { runtime_->progress(); });
   }
 
   void progress(size_t worker_index) {
     validate_profile_worker(worker_index);
-    const auto start = std::chrono::steady_clock::now();
-    runtime_->progress(worker_index);
-    profile_.record(detail::ProfileOperation::progress, worker_index, 0, 0, detail::elapsed_nanoseconds(start));
+    profile_.measure(detail::ProfileOperation::progress, worker_index, 0, 0, [&] { runtime_->progress(worker_index); });
   }
 
   bool is_done() {

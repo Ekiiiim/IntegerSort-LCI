@@ -10,6 +10,7 @@
 #include <exception>
 #include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace lci_irregular::detail {
@@ -50,6 +51,11 @@ inline void snapshot_operation(const AtomicOperationProfile& source, AmOperation
   destination.elapsed_nanoseconds = source.elapsed_nanoseconds.load(std::memory_order_relaxed);
 }
 
+inline uint64_t elapsed_nanoseconds(std::chrono::steady_clock::time_point start) noexcept {
+  return static_cast<uint64_t>(
+      std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count());
+}
+
 class AmProfileRecorder {
 public:
   AmProfileRecorder(bool enabled, size_t worker_count, uint64_t exchange_sequence, std::string name)
@@ -76,6 +82,19 @@ public:
       record_operation(workers_[*worker_index].operations[static_cast<size_t>(operation)], records, payload_bytes,
                        elapsed_nanoseconds);
     }
+  }
+
+  template <typename Function>
+  void measure(ProfileOperation operation, std::optional<size_t> worker_index, size_t records, size_t payload_bytes,
+               Function&& function) {
+    if (!enabled_) {
+      std::forward<Function>(function)();
+      return;
+    }
+
+    const auto start = std::chrono::steady_clock::now();
+    std::forward<Function>(function)();
+    record(operation, worker_index, records, payload_bytes, elapsed_nanoseconds(start));
   }
 
   AmExchangeProfile snapshot() const {
@@ -118,11 +137,6 @@ private:
   std::vector<AtomicWorkerProfile> workers_;
 };
 
-inline uint64_t elapsed_nanoseconds(std::chrono::steady_clock::time_point start) noexcept {
-  return static_cast<uint64_t>(
-      std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now() - start).count());
-}
-
 inline std::optional<size_t>& current_progress_worker() noexcept {
   static thread_local std::optional<size_t> worker_index;
   return worker_index;
@@ -138,18 +152,24 @@ inline std::optional<size_t> progress_worker() noexcept {
 
 class ProgressWorkerScope {
 public:
-  explicit ProgressWorkerScope(std::optional<size_t> worker_index) noexcept : previous_(progress_worker()) {
-    set_progress_worker(worker_index);
+  ProgressWorkerScope(bool enabled, std::optional<size_t> worker_index) noexcept : enabled_(enabled) {
+    if (enabled_) {
+      previous_ = progress_worker();
+      set_progress_worker(worker_index);
+    }
   }
 
   ~ProgressWorkerScope() {
-    set_progress_worker(previous_);
+    if (enabled_) {
+      set_progress_worker(previous_);
+    }
   }
 
   ProgressWorkerScope(const ProgressWorkerScope&) = delete;
   ProgressWorkerScope& operator=(const ProgressWorkerScope&) = delete;
 
 private:
+  bool enabled_;
   std::optional<size_t> previous_;
 };
 
