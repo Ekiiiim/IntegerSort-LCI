@@ -40,11 +40,11 @@ lci_irregular::AmExchangeProfile redistribute_keys_with_active_messages(lci_irre
   };
 
   auto send_phase = [keys, local_key_count, route_key](auto run_worker) noexcept {
-#pragma omp parallel
+    #pragma omp parallel
     {
       const size_t worker_index = current_worker_index();
       run_worker(worker_index, [=](auto am_send) noexcept {
-#pragma omp for nowait
+        #pragma omp for nowait
         for (KeyCount i = 0; i < local_key_count; ++i) {
           const KeyValue key = keys[i];
           am_send(route_key(key), key);
