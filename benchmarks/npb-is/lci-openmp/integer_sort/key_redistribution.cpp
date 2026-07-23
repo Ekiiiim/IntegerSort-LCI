@@ -39,6 +39,7 @@ lci_irregular::AmExchangeProfile redistribute_keys_with_active_messages(lci_irre
     return received_count.load(std::memory_order_relaxed) >= static_cast<size_t>(expected_recv_count);
   };
 
+  // clang-format off: preserve C++-scope indentation for OpenMP pragmas.
   auto send_phase = [keys, local_key_count, route_key](auto run_worker) noexcept {
     #pragma omp parallel
     {
@@ -52,6 +53,7 @@ lci_irregular::AmExchangeProfile redistribute_keys_with_active_messages(lci_irre
       });
     }
   };
+  // clang-format on
 
   return runtime.am_exchange_until<KeyValue>(am_handler, is_done, send_phase, options);
 }
