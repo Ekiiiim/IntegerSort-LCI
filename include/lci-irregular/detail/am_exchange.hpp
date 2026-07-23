@@ -577,12 +577,22 @@ AmExchangeProfile IrregularRuntime::am_exchange_until(AmHandler am_handler, IsDo
   auto exchange = am_exchange_start<Record>(std::move(am_handler), std::move(is_done), options);
   barrier();
 
-  std::atomic<size_t> worker_calls{0};
+  constexpr size_t worker_calls_closed_bit = size_t{1} << (std::numeric_limits<size_t>::digits - 1);
+  constexpr size_t worker_calls_count_mask = worker_calls_closed_bit - 1;
   std::atomic<size_t> active_worker_calls{0};
+  std::atomic<size_t> worker_calls{0};
   auto run_worker = [&](size_t worker_index, auto&& produce) noexcept {
-    worker_calls.fetch_add(1);
-    active_worker_calls.fetch_add(1);
+    const size_t worker_call_state = active_worker_calls.fetch_add(1);
     try {
+      if ((worker_call_state & worker_calls_closed_bit) != 0) {
+        active_worker_calls.fetch_sub(1);
+        throw std::logic_error("LCI irregular AM worker entered after send phase returned");
+      }
+      if ((worker_call_state & worker_calls_count_mask) == worker_calls_count_mask) {
+        active_worker_calls.fetch_sub(1);
+        throw std::overflow_error("LCI irregular AM active worker count overflow");
+      }
+      worker_calls.fetch_add(1);
       auto sender = exchange.make_sender(worker_index);
       auto am_send = [&](int destination_rank, const Record& record) { sender.am_send(destination_rank, record); };
       std::forward<decltype(produce)>(produce)(am_send);
@@ -598,11 +608,12 @@ AmExchangeProfile IrregularRuntime::am_exchange_until(AmHandler am_handler, IsDo
 
   try {
     std::move(send_phase)(run_worker);
+    const size_t worker_call_state = active_worker_calls.fetch_or(worker_calls_closed_bit);
+    if ((worker_call_state & worker_calls_count_mask) != 0) {
+      throw std::logic_error("LCI irregular AM send phase returned with active workers");
+    }
     if (worker_calls.load() == 0) {
       throw std::logic_error("LCI irregular AM send phase did not run a worker");
-    }
-    if (active_worker_calls.load() != 0) {
-      throw std::logic_error("LCI irregular AM send phase returned with active workers");
     }
     exchange.wait();
     return exchange.profile();
