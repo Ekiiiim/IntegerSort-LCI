@@ -40,11 +40,11 @@ lci_irregular::AmExchangeProfile redistribute_keys_with_active_messages(lci_irre
   };
 
   // clang-format off: preserve C++-scope indentation for OpenMP pragmas.
-  auto send_phase = [keys, local_key_count, route_key](auto run_worker) noexcept {
+  auto send_phase = [keys, local_key_count, route_key](auto run_worker) {
     #pragma omp parallel
     {
       const size_t worker_index = current_worker_index();
-      run_worker(worker_index, [=](auto am_send) noexcept {
+      run_worker(worker_index, [=](auto am_send) {
         #pragma omp for nowait
         for (KeyCount i = 0; i < local_key_count; ++i) {
           const KeyValue key = keys[i];

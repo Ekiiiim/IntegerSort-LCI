@@ -578,8 +578,10 @@ AmExchangeProfile IrregularRuntime::am_exchange_until(AmHandler am_handler, IsDo
   barrier();
 
   std::atomic<size_t> worker_calls{0};
+  std::atomic<size_t> active_worker_calls{0};
   auto run_worker = [&](size_t worker_index, auto&& produce) noexcept {
-    worker_calls.fetch_add(1, std::memory_order_relaxed);
+    worker_calls.fetch_add(1);
+    active_worker_calls.fetch_add(1);
     try {
       auto sender = exchange.make_sender(worker_index);
       auto am_send = [&](int destination_rank, const Record& record) { sender.am_send(destination_rank, record); };
@@ -588,6 +590,7 @@ AmExchangeProfile IrregularRuntime::am_exchange_until(AmHandler am_handler, IsDo
       while (!exchange.is_done()) {
         exchange.progress(worker_index);
       }
+      active_worker_calls.fetch_sub(1);
     } catch (...) {
       detail::terminate_current_exception("LCI irregular AM worker terminated");
     }
@@ -595,8 +598,11 @@ AmExchangeProfile IrregularRuntime::am_exchange_until(AmHandler am_handler, IsDo
 
   try {
     std::move(send_phase)(run_worker);
-    if (worker_calls.load(std::memory_order_relaxed) == 0) {
+    if (worker_calls.load() == 0) {
       throw std::logic_error("LCI irregular AM send phase did not run a worker");
+    }
+    if (active_worker_calls.load() != 0) {
+      throw std::logic_error("LCI irregular AM send phase returned with active workers");
     }
     exchange.wait();
     return exchange.profile();

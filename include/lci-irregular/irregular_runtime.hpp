@@ -122,6 +122,11 @@ public:
   // produce), and produce calls am_send(destination_rank, record). The runtime
   // owns sender aggregation, flush, progress, completion, and profiling.
   // am_handler and is_done may run concurrently and must be thread-safe.
+  // send_phase must not return until all run_worker calls have returned. Every
+  // rank must invoke at least one run_worker, including ranks with no outgoing
+  // records. Concurrent workers require distinct indices that remain stable
+  // for each invocation. A single worker is valid only when it produces every
+  // outgoing record for its rank. Dynamic tasks must use am_exchange_start().
   template <typename Record, typename AmHandler, typename IsDone, typename SendPhase>
   AmExchangeProfile am_exchange_until(AmHandler am_handler, IsDone is_done, SendPhase send_phase,
                                       AmExchangeOptions options = {});

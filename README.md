@@ -62,23 +62,23 @@ lci_irregular::IrregularRuntime runtime;
 std::atomic<std::size_t> received{0};
 
 auto am_handler = [&](lci_irregular::RecordBatchView<Record> records,
-                      int source_rank) noexcept {
+                      int source_rank) {
   for (std::size_t i = 0; i < records.size(); ++i) {
     process_record(records[i], source_rank); // Must be thread-safe.
   }
   received.fetch_add(records.size(), std::memory_order_relaxed);
 };
-auto is_done = [&]() noexcept {
+auto is_done = [&]() {
   return received.load(std::memory_order_relaxed) == expected_records;
 };
 
-auto send_phase = [&](auto run_worker) noexcept {
+auto send_phase = [&](auto run_worker) {
   // OpenMP is owned and configured by the application; any thread model can
   // launch these workers as long as the calls execute concurrently.
   #pragma omp parallel
   {
     const std::size_t worker_index = current_worker_index();
-    run_worker(worker_index, [&](auto am_send) noexcept {
+    run_worker(worker_index, [&](auto am_send) {
       #pragma omp for nowait
       for (std::size_t i = 0; i < local_records.size(); ++i) {
         const Record& record = local_records[i];
@@ -97,9 +97,11 @@ callback; copy any records that must be retained after the callback returns.
 
 `am_exchange_until` is the primary fork-join bulk API. Its `send_phase` receives `run_worker`; each application worker calls `run_worker(worker_index, produce)`, and `produce(am_send)` submits typed records. The call includes registration, sender aggregation, progress, completion, and profiling, and returns an `AmExchangeProfile` after completion. Every runtime rank must call it in the same order.
 
+Every rank must call `run_worker` at least once, including ranks with no outgoing records, so that each rank participates in progress. `send_phase` must wait for and join all `run_worker` calls before returning. Concurrent calls must use distinct worker indices, and each index must remain stable for the full `run_worker` invocation. A single worker is valid only when it produces all outgoing records for its rank.
+
 If multiple workers contribute records, their `run_worker` calls must execute concurrently because `run_worker` blocks until global completion. The application owns the worker threads and may use OpenMP or any other thread model; `am_handler` and `is_done` can run concurrently with those workers, so all application state they share must be thread-safe. Callable construction must not throw. Errors after registration are fail-fast: the library terminates rather than attempting distributed cancellation.
 
-`am_exchange_start` remains the advanced API for dynamic task graphs and custom exchange lifecycles. Its callers own sender creation, progress, completion, and finalization.
+`am_exchange_start` remains the advanced API for dynamic tasks, work queues that cannot guarantee concurrent producer participation, and custom exchange lifecycles. Its callers own sender creation, progress, completion, and finalization.
 
 ## Threading and Progress
 
