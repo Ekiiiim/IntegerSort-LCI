@@ -24,7 +24,7 @@ public:
 };
 
 IrregularRuntime& active_runtime();
-void am_handler(lci::status_t status) noexcept;
+void dispatch_am_message(lci::status_t status) noexcept;
 
 } // namespace detail
 } // namespace lci_irregular

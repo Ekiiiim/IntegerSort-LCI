@@ -67,11 +67,11 @@ struct AmExchangeOptions {
 };
 
 class IrregularRuntime;
-template <typename Record, typename ReceiveBatch, typename IsDone> class AmExchange;
+template <typename Record, typename AmHandler, typename IsDone> class AmExchange;
 
 namespace detail {
 class AmExchangeStateBase;
-void am_handler(lci::status_t status) noexcept;
+void dispatch_am_message(lci::status_t status) noexcept;
 const std::vector<lci::device_t>& devices(const IrregularRuntime& runtime);
 const lci::device_t& control_device(const IrregularRuntime& runtime);
 lci::rcomp_t remote_completion(const IrregularRuntime& runtime);
@@ -113,24 +113,18 @@ public:
   // the same order and complete phase synchronization before the first send.
   // Every sender must be closed or destroyed before wait(), profile(), or the
   // exchange itself.
-  template <typename Record, typename ReceiveBatch, typename IsDone>
-  AmExchange<Record, ReceiveBatch, IsDone> am_exchange_start(ReceiveBatch receive_batch, IsDone is_done,
-                                                             AmExchangeOptions options = {});
+  template <typename Record, typename AmHandler, typename IsDone>
+  AmExchange<Record, AmHandler, IsDone> am_exchange_start(AmHandler am_handler, IsDone is_done,
+                                                          AmExchangeOptions options = {});
 
-  // Blocking active-message exchange for fixed-size records. The runtime packs
-  // records into aggregated AM payloads; callers provide routing, receive, and
-  // completion logic. All runtime ranks participate in its registration
-  // barrier and exchange.
-  template <typename Record, typename RouteRecord, typename ReceiveBatch>
-  AmExchangeProfile am_exchange_counted(const Record* records, size_t count, RouteRecord route_record,
-                                        ReceiveBatch receive_batch, size_t expected_recv_count,
-                                        AmExchangeOptions options = {});
-
-  // General completion variant. is_done() must become true only after all
-  // application-expected inbound records/messages have been processed.
-  template <typename Record, typename RouteRecord, typename ReceiveBatch, typename IsDone>
-  AmExchangeProfile am_exchange_until(const Record* records, size_t count, RouteRecord route_record,
-                                      ReceiveBatch receive_batch, IsDone is_done, AmExchangeOptions options = {});
+  // Run a blocking fork-join active-message exchange. The application launches
+  // its workers in send_phase; each worker calls run_worker(worker_index,
+  // produce), and produce calls am_send(destination_rank, record). The runtime
+  // owns sender aggregation, flush, progress, completion, and profiling.
+  // am_handler and is_done may run concurrently and must be thread-safe.
+  template <typename Record, typename AmHandler, typename IsDone, typename SendPhase>
+  AmExchangeProfile am_exchange_until(AmHandler am_handler, IsDone is_done, SendPhase send_phase,
+                                      AmExchangeOptions options = {});
 
 private:
   friend const std::vector<lci::device_t>& detail::devices(const IrregularRuntime& runtime);
@@ -152,7 +146,7 @@ private:
   int rank_ = 0;
   int rank_count_ = 0;
   std::vector<lci::device_t> devices_;
-  lci::comp_t am_handler_ = nullptr;
+  lci::comp_t am_dispatch_handler_ = nullptr;
   lci::rcomp_t am_rcomp_ = 0;
   uint32_t next_exchange_id_ = 1;
   std::mutex exchange_mutex_;

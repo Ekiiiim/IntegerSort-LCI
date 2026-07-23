@@ -11,7 +11,7 @@
 namespace lci_irregular {
 namespace detail {
 
-void am_handler(lci::status_t status) noexcept {
+void dispatch_am_message(lci::status_t status) noexcept {
   try {
     if (status.get_size() < sizeof(AmMessageHeader)) {
       std::fprintf(stderr, "Received malformed LCI irregular AM payload: %zu bytes\n", status.get_size());

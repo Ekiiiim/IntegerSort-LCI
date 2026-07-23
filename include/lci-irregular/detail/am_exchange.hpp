@@ -25,6 +25,17 @@
 namespace lci_irregular {
 namespace detail {
 
+[[noreturn]] inline void terminate_current_exception(const char* context) noexcept {
+  try {
+    throw;
+  } catch (const std::exception& error) {
+    std::fprintf(stderr, "%s after exception: %s\n", context, error.what());
+  } catch (...) {
+    std::fprintf(stderr, "%s after unknown exception\n", context);
+  }
+  std::terminate();
+}
+
 inline size_t align_up(size_t value, size_t alignment) {
   return ((value + alignment - 1) / alignment) * alignment;
 }
@@ -37,10 +48,10 @@ template <typename Record> size_t message_bytes(size_t batch_records) {
   return header_bytes<Record>() + batch_records * sizeof(Record);
 }
 
-template <typename Record, typename ReceiveBatch> class TypedAmExchangeState : public AmExchangeStateBase {
+template <typename Record, typename AmHandler> class TypedAmExchangeState : public AmExchangeStateBase {
 public:
-  TypedAmExchangeState(ReceiveBatch& receive_batch, AmProfileRecorder& profile)
-      : receive_batch_(receive_batch), profile_(profile) {}
+  TypedAmExchangeState(AmHandler& am_handler, AmProfileRecorder& profile)
+      : am_handler_(am_handler), profile_(profile) {}
 
   void set_exchange_id(uint32_t exchange_id) {
     exchange_id_ = exchange_id;
@@ -82,11 +93,11 @@ private:
 
     profile_.measure(loopback ? ProfileOperation::loopback_receive : ProfileOperation::remote_receive, worker_index,
                      header.record_count, header.record_count * sizeof(Record),
-                     [&] { receive_batch_(RecordBatchView<Record>(payload, header.record_count), source_rank); });
+                     [&] { am_handler_(RecordBatchView<Record>(payload, header.record_count), source_rank); });
   }
 
   uint32_t exchange_id_ = 0;
-  ReceiveBatch& receive_batch_;
+  AmHandler& am_handler_;
   AmProfileRecorder& profile_;
 };
 
@@ -224,7 +235,7 @@ template <typename Record> size_t choose_batch_records(AmExchangeOptions options
 
 } // namespace detail
 
-template <typename Record, typename ReceiveBatch, typename IsDone> class AmExchange {
+template <typename Record, typename AmHandler, typename IsDone> class AmExchange {
   static_assert(std::is_trivially_copyable<Record>::value, "Record must be trivially copyable");
   static_assert(std::is_trivially_default_constructible<Record>::value,
                 "Record must be trivially default constructible under C++17");
@@ -406,11 +417,10 @@ public:
     void* fallback_storage_ = nullptr;
   };
 
-  AmExchange(IrregularRuntime& runtime, ReceiveBatch receive_batch, IsDone is_done, AmExchangeOptions options)
-      : runtime_(&runtime), receive_batch_(std::move(receive_batch)), is_done_(std::move(is_done)),
+  AmExchange(IrregularRuntime& runtime, AmHandler am_handler, IsDone is_done, AmExchangeOptions options)
+      : runtime_(&runtime), am_handler_(std::move(am_handler)), is_done_(std::move(is_done)),
         profile_(runtime.profiling_enabled(), runtime.profiling_worker_count(), 0, options.profile_name),
-        state_(receive_batch_, profile_), options_(options),
-        batch_records_(detail::choose_batch_records<Record>(options)),
+        state_(am_handler_, profile_), options_(options), batch_records_(detail::choose_batch_records<Record>(options)),
         bytes_per_buffer_(detail::message_bytes<Record>(batch_records_)) {
     send_counter_ = lci::alloc_counter();
     try {
@@ -540,10 +550,10 @@ private:
   }
 
   IrregularRuntime* runtime_;
-  ReceiveBatch receive_batch_;
+  AmHandler am_handler_;
   IsDone is_done_;
   detail::AmProfileRecorder profile_;
-  detail::TypedAmExchangeState<Record, ReceiveBatch> state_;
+  detail::TypedAmExchangeState<Record, AmHandler> state_;
   AmExchangeOptions options_;
   size_t batch_records_ = 0;
   size_t bytes_per_buffer_ = 0;
@@ -555,76 +565,44 @@ private:
   std::once_flag profile_finalize_once_;
 };
 
-template <typename Record, typename ReceiveBatch, typename IsDone>
-AmExchange<Record, ReceiveBatch, IsDone> IrregularRuntime::am_exchange_start(ReceiveBatch receive_batch, IsDone is_done,
-                                                                             AmExchangeOptions options) {
-  return AmExchange<Record, ReceiveBatch, IsDone>(*this, std::move(receive_batch), std::move(is_done), options);
+template <typename Record, typename AmHandler, typename IsDone>
+AmExchange<Record, AmHandler, IsDone> IrregularRuntime::am_exchange_start(AmHandler am_handler, IsDone is_done,
+                                                                          AmExchangeOptions options) {
+  return AmExchange<Record, AmHandler, IsDone>(*this, std::move(am_handler), std::move(is_done), options);
 }
 
-template <typename Record, typename RouteRecord, typename ReceiveBatch>
-AmExchangeProfile IrregularRuntime::am_exchange_counted(const Record* records, size_t count, RouteRecord route_record,
-                                                        ReceiveBatch receive_batch, size_t expected_recv_count,
-                                                        AmExchangeOptions options) {
-  std::atomic<size_t> received_count{0};
-  auto counted_receive = [&](RecordBatchView<Record> batch, int source_rank) {
-    receive_batch(batch, source_rank);
-    received_count.fetch_add(batch.size(), std::memory_order_relaxed);
-  };
-  auto is_done = [&]() { return received_count.load(std::memory_order_relaxed) >= expected_recv_count; };
-  return am_exchange_until<Record>(records, count, route_record, counted_receive, is_done, options);
-}
-
-template <typename Record, typename RouteRecord, typename ReceiveBatch, typename IsDone>
-AmExchangeProfile IrregularRuntime::am_exchange_until(const Record* records, size_t count, RouteRecord route_record,
-                                                      ReceiveBatch receive_batch, IsDone is_done,
+template <typename Record, typename AmHandler, typename IsDone, typename SendPhase>
+AmExchangeProfile IrregularRuntime::am_exchange_until(AmHandler am_handler, IsDone is_done, SendPhase send_phase,
                                                       AmExchangeOptions options) {
-  std::vector<int> destinations;
-  std::exception_ptr preflight_error;
-  try {
-    (void)detail::choose_batch_records<Record>(options);
-    if (records == nullptr && count != 0) {
-      throw std::invalid_argument("LCI irregular AM exchange received null records with nonzero count");
-    }
-    destinations.reserve(count);
-    for (size_t i = 0; i < count; ++i) {
-      const int destination = route_record(records[i]);
-      if (destination < 0 || destination >= rank_count()) {
-        throw std::invalid_argument("LCI irregular AM route returned an invalid destination rank");
-      }
-      destinations.push_back(destination);
-    }
-  } catch (...) {
-    preflight_error = std::current_exception();
-  }
+  auto exchange = am_exchange_start<Record>(std::move(am_handler), std::move(is_done), options);
+  barrier();
 
-  const int local_preflight_failure = preflight_error == nullptr ? 0 : 1;
-  int preflight_failure_count = 0;
-  auto sum_int = [](const void* left, const void* right, void* output, size_t element_count) {
-    const int* left_values = static_cast<const int*>(left);
-    const int* right_values = static_cast<const int*>(right);
-    int* output_values = static_cast<int*>(output);
-    for (size_t i = 0; i < element_count; ++i) {
-      output_values[i] = left_values[i] + right_values[i];
+  std::atomic<size_t> worker_calls{0};
+  auto run_worker = [&](size_t worker_index, auto&& produce) noexcept {
+    worker_calls.fetch_add(1, std::memory_order_relaxed);
+    try {
+      auto sender = exchange.make_sender(worker_index);
+      auto am_send = [&](int destination_rank, const Record& record) { sender.am_send(destination_rank, record); };
+      std::forward<decltype(produce)>(produce)(am_send);
+      sender.close();
+      while (!exchange.is_done()) {
+        exchange.progress(worker_index);
+      }
+    } catch (...) {
+      detail::terminate_current_exception("LCI irregular AM worker terminated");
     }
   };
-  reduce(&local_preflight_failure, &preflight_failure_count, 1, sizeof(int), sum_int, 0);
-  broadcast_int(&preflight_failure_count, 0);
-  if (preflight_failure_count != 0) {
-    if (preflight_error != nullptr) {
-      std::rethrow_exception(preflight_error);
-    }
-    throw std::runtime_error("LCI irregular AM exchange preflight failed on another rank");
-  }
 
-  auto exchange = am_exchange_start<Record>(std::move(receive_batch), std::move(is_done), options);
-  barrier();
-  auto sender = exchange.make_sender();
-  for (size_t i = 0; i < count; ++i) {
-    sender.am_send(destinations[i], records[i]);
+  try {
+    std::move(send_phase)(run_worker);
+    if (worker_calls.load(std::memory_order_relaxed) == 0) {
+      throw std::logic_error("LCI irregular AM send phase did not run a worker");
+    }
+    exchange.wait();
+    return exchange.profile();
+  } catch (...) {
+    detail::terminate_current_exception("LCI irregular AM send phase terminated");
   }
-  sender.close();
-  exchange.wait();
-  return exchange.profile();
 }
 
 } // namespace lci_irregular

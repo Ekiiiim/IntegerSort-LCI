@@ -36,8 +36,8 @@ IrregularRuntime::IrregularRuntime(IrregularRuntimeOptions options) : profiling_
     rank_ = lci::get_rank_me();
     rank_count_ = lci::get_rank_n();
     allocate_devices(options);
-    am_handler_ = lci::alloc_handler_x(detail::am_handler).zero_copy_am(true)();
-    am_rcomp_ = lci::register_rcomp(am_handler_);
+    am_dispatch_handler_ = lci::alloc_handler_x(detail::dispatch_am_message).zero_copy_am(true)();
+    am_rcomp_ = lci::register_rcomp(am_dispatch_handler_);
     g_active_runtime = this;
     barrier();
   } catch (...) {
@@ -48,8 +48,8 @@ IrregularRuntime::IrregularRuntime(IrregularRuntimeOptions options) : profiling_
       lci::deregister_rcomp(am_rcomp_);
       am_rcomp_ = 0;
     }
-    if (!am_handler_.is_empty()) {
-      lci::free_comp(&am_handler_);
+    if (!am_dispatch_handler_.is_empty()) {
+      lci::free_comp(&am_dispatch_handler_);
     }
     free_devices();
     if (lci_initialized) {
@@ -71,8 +71,8 @@ IrregularRuntime::~IrregularRuntime() {
     lci::deregister_rcomp(am_rcomp_);
     am_rcomp_ = 0;
   }
-  if (!am_handler_.is_empty()) {
-    lci::free_comp(&am_handler_);
+  if (!am_dispatch_handler_.is_empty()) {
+    lci::free_comp(&am_dispatch_handler_);
   }
   free_devices();
   g_active_runtime = nullptr;
