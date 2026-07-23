@@ -22,7 +22,7 @@ int main() {
 
   lci_irregular::IrregularRuntime runtime(runtime_options);
   std::atomic<size_t> received_count{0};
-  auto receive_batch = [&](lci_irregular::RecordBatchView<Record> records, int source_rank) noexcept {
+  auto am_handler = [&](lci_irregular::RecordBatchView<Record> records, int source_rank) noexcept {
     for (size_t i = 0; i < records.size(); ++i) {
       Record record = records[i];
       std::printf("rank %d received key=%llu value=%.1f from rank %d\n", runtime.rank(),
@@ -34,15 +34,14 @@ int main() {
 
   lci_irregular::AmExchangeOptions exchange_options;
   exchange_options.profile_name = "typed-am-exchange";
-  auto exchange = runtime.am_exchange_start<Record>(receive_batch, is_done, exchange_options);
-  runtime.barrier();
-  auto sender = exchange.make_sender(0);
   const int destination = (runtime.rank() + 1) % runtime.rank_count();
-  sender.am_send(destination, Record{static_cast<uint64_t>(runtime.rank()), runtime.rank() + 0.5});
-  sender.close();
-  exchange.wait();
+  auto send_phase = [&](auto run_worker) noexcept {
+    run_worker(0, [&](auto am_send) noexcept {
+      am_send(destination, Record{static_cast<uint64_t>(runtime.rank()), runtime.rank() + 0.5});
+    });
+  };
 
-  const auto profile = exchange.profile();
+  const auto profile = runtime.am_exchange_until<Record>(am_handler, is_done, send_phase, exchange_options);
   if (profile.enabled) {
     std::printf("rank %d aggregate flush calls: %llu\n", runtime.rank(),
                 static_cast<unsigned long long>(profile.aggregate.flush.calls));

@@ -61,8 +61,8 @@ struct Record {
 lci_irregular::IrregularRuntime runtime;
 std::atomic<std::size_t> received{0};
 
-auto receive_batch = [&](lci_irregular::RecordBatchView<Record> records,
-                         int source_rank) noexcept {
+auto am_handler = [&](lci_irregular::RecordBatchView<Record> records,
+                      int source_rank) noexcept {
   for (std::size_t i = 0; i < records.size(); ++i) {
     process_record(records[i], source_rank); // Must be thread-safe.
   }
@@ -72,35 +72,36 @@ auto is_done = [&]() noexcept {
   return received.load(std::memory_order_relaxed) == expected_records;
 };
 
-auto exchange = runtime.am_exchange_start<Record>(receive_batch, is_done);
-runtime.barrier(); // All participating ranks have registered this exchange.
-auto sender = exchange.make_sender(worker_index);
-for (const Record& record : local_records) {
-  sender.am_send(destination_for(record), record);
-}
-sender.close();
+auto send_phase = [&](auto run_worker) noexcept {
+  for (std::size_t worker_index = 0; worker_index < worker_count; ++worker_index) {
+    run_worker(worker_index, [&](auto am_send) noexcept {
+      for (const Record& record : local_records_for(worker_index)) {
+        am_send(destination_for(record), record);
+      }
+    });
+  }
+};
 
-while (!exchange.is_done()) {
-  exchange.progress(worker_index);
-}
-exchange.wait();
+const auto profile = runtime.am_exchange_until<Record>(am_handler, is_done, send_phase);
 ```
 
 `RecordBatchView` reads typed record values directly from the received packet
 without materializing a second array. The view is valid only during the receive
 callback; copy any records that must be retained after the callback returns.
 
-`am_exchange_counted` is the blocking convenience API when completion is an expected receive-record count. `am_exchange_until` accepts a general completion callback. Both return an `AmExchangeProfile` value and include a registration barrier, so every runtime rank must call them in the same order. They collectively preflight input pointers, routes, and batch-size options, so a validation error on one rank is reported on every rank before registration. Callable construction must not throw; resource exhaustion while starting a distributed exchange is not recoverable by this interface.
+`am_exchange_until` is the primary fork-join bulk API. Its `send_phase` receives `run_worker`; each application worker calls `run_worker(worker_index, produce)`, and `produce(am_send)` submits typed records. The call includes registration, sender aggregation, progress, completion, and profiling, and returns an `AmExchangeProfile` after completion. Every runtime rank must call it in the same order.
+
+Workers can run concurrently, and `am_handler` and `is_done` can run concurrently with them, so all application state they share must be thread-safe. Callable construction must not throw. Errors after registration are fail-fast: the library terminates rather than attempting distributed cancellation.
+
+`am_exchange_start` remains the advanced API for dynamic task graphs and custom exchange lifecycles. Its callers own sender creation, progress, completion, and finalization.
 
 ## Threading and Progress
 
-Only one `IrregularRuntime` may be live in a process. The application chooses its worker model and passes `device_count`; the library does not create threads or call OpenMP.
+Only one `IrregularRuntime` may be live in a process. The application chooses its worker model and passes `device_count`; the library does not create threads and has no dependency on OpenMP.
 
 Each sender belongs to one worker and is not shared concurrently. Different workers may use different senders for the same exchange. Indexed `progress(worker_index)` maps workers to LCI devices and enables per-worker profiling. Receive callbacks can run concurrently on threads that call progress, so application state updated by callbacks must be thread-safe.
 
-Participating ranks must create exchanges in the same order and complete application phase synchronization before the first send. This keeps the nonblocking start operation free of an implicit global barrier while ensuring that a remote active message cannot arrive before its exchange is registered.
-
-All senders must be closed or destroyed and all other progress workers must stop operating on the exchange before one thread calls `wait()` or `profile()`. An exchange must complete before destruction. `wait()` is the blocking completion operation; `is_done()` and `progress()` support integration with an application's own scheduling loop. Errors raised after a nonblocking exchange has started must be handled while the exchange remains in scope so the application can still complete it; this interface does not provide distributed cancellation.
+For the advanced API, participating ranks must create exchanges in the same order and complete application phase synchronization before the first send. All senders must be closed or destroyed and all other progress workers must stop operating on the exchange before one thread calls `wait()` or `profile()`. An exchange must complete before destruction.
 
 ## Profiling
 
