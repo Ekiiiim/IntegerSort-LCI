@@ -107,30 +107,30 @@ public:
     lci::reduce_x(sendbuf, recvbuf, count, element_size, op, root).device(control_device())();
   }
 
-  // Start a nonblocking active-message exchange. The returned handle owns the
-  // exchange lifetime; applications create per-worker senders and decide how
-  // those workers are scheduled. Participating ranks must create exchanges in
-  // the same order and complete phase synchronization before the first send.
-  // Every sender must be closed or destroyed before wait(), profile(), or the
-  // exchange itself.
+  // Start the primary asynchronous active-message exchange. The returned handle
+  // owns the exchange lifetime; applications create per-worker senders, drive
+  // progress, and decide how workers are scheduled. Participating ranks must
+  // create exchanges in the same order and complete phase synchronization
+  // before the first send. Every sender must be closed or destroyed before
+  // wait(), profile(), or the exchange itself.
   template <typename Record, typename AmHandler, typename IsDone>
   AmExchange<Record, AmHandler, IsDone> am_exchange_start(AmHandler am_handler, IsDone is_done,
                                                           AmExchangeOptions options = {});
 
-  // Run a blocking fork-join active-message exchange. The application launches
-  // its workers in send_phase; each worker calls run_worker(worker_index,
-  // produce), and produce calls am_send(destination_rank, record). The runtime
-  // owns sender aggregation, flush, progress, completion, and profiling.
-  // am_handler and is_done may run concurrently and must be thread-safe.
-  // send_phase must not return until all run_worker calls have returned. Every
-  // rank must invoke at least one run_worker, including ranks with no outgoing
-  // records. produce and am_send must not escape their run_worker invocation.
-  // All participating workers, including progress-only workers, must launch
-  // concurrently. Concurrent workers require distinct indices that remain
-  // stable for each invocation and map modulo device_count. With profiling
-  // enabled, each index must be less than profiling.worker_count. A single
-  // worker is valid only when it produces every outgoing record for its rank.
-  // Dynamic tasks must use am_exchange_start().
+  // Run a blocking convenience wrapper around the asynchronous exchange for
+  // fork-join active-message phases. The application launches its workers in
+  // send_phase; each worker calls run_worker(worker_index, produce), and
+  // produce calls am_send(destination_rank, record). The runtime owns sender
+  // aggregation, flush, progress, completion, and profiling. am_handler and
+  // is_done may run concurrently and must be thread-safe. send_phase must not
+  // return until all run_worker calls have returned. Every rank must invoke at
+  // least one run_worker, including ranks with no outgoing records. produce and
+  // am_send must not escape their run_worker invocation. All participating
+  // workers, including progress-only workers, must launch concurrently.
+  // Concurrent workers require distinct indices that remain stable for each
+  // invocation and map modulo device_count. With profiling enabled, each index
+  // must be less than profiling.worker_count. Dynamic tasks and custom
+  // lifecycles should use am_exchange_start().
   template <typename Record, typename AmHandler, typename IsDone, typename SendPhase>
   AmExchangeProfile am_exchange_until(AmHandler am_handler, IsDone is_done, SendPhase send_phase,
                                       AmExchangeOptions options = {});

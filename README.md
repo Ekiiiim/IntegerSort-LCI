@@ -95,13 +95,15 @@ const auto profile = runtime.am_exchange_until<Record>(am_handler, is_done, send
 without materializing a second array. The view is valid only during the receive
 callback; copy any records that must be retained after the callback returns.
 
-`am_exchange_until` is the primary fork-join bulk API. Its `send_phase` receives `run_worker`; each application worker calls `run_worker(worker_index, produce)`, and `produce(am_send)` submits typed records. The call includes registration, sender aggregation, progress, completion, and profiling, and returns an `AmExchangeProfile` after completion. Every runtime rank must call it in the same order.
+`am_exchange_start` is the primary asynchronous API. It returns an exchange handle so callers can create worker-local senders, drive progress, wait for completion, and collect profiling data explicitly. This form is intended for dynamic task graphs, work queues, and applications that need custom exchange lifecycles.
+
+`am_exchange_until` is a convenience API for fork-join bulk phases. Its `send_phase` receives `run_worker`; each application worker calls `run_worker(worker_index, produce)`, and `produce(am_send)` submits typed records. The call creates the asynchronous exchange internally, includes registration, sender aggregation, progress, completion, and profiling, and returns an `AmExchangeProfile` after completion. Every runtime rank must call it in the same order.
 
 Every rank must call `run_worker` at least once, including ranks with no outgoing records, so that each rank participates in progress. `send_phase` must wait for and join all `run_worker` calls before returning. `produce` and `am_send` must not escape their `run_worker` invocation. Concurrent calls must use distinct worker indices, and each index must remain stable for the full `run_worker` invocation. Each index maps modulo `device_count`; when profiling is enabled, it must be less than `profiling.worker_count`. A single worker is valid only when it produces all outgoing records for its rank.
 
 All participating workers, including progress-only workers, must launch concurrently because `run_worker` blocks until global completion. The application owns the worker threads and may use OpenMP or any other thread model; `am_handler` and `is_done` can run concurrently with those workers, so all application state they share must be thread-safe. Callable construction must not throw. Errors after registration are fail-fast: the library terminates rather than attempting distributed cancellation.
 
-`am_exchange_start` remains the advanced API for dynamic tasks, work queues that cannot guarantee concurrent producer participation, and custom exchange lifecycles. Its callers own sender creation, progress, completion, and finalization.
+Use `am_exchange_start` when the application needs direct control over sender creation, progress, completion, and finalization. Use `am_exchange_until` when the exchange is a single fork-join phase and the wrapper's worker contract fits the application.
 
 ## Threading and Progress
 
@@ -109,7 +111,7 @@ Only one `IrregularRuntime` may be live in a process. The application chooses it
 
 Each sender belongs to one worker and is not shared concurrently. Different workers may use different senders for the same exchange. Indexed `progress(worker_index)` maps workers to LCI devices and enables per-worker profiling. Receive callbacks can run concurrently on threads that call progress, so application state updated by callbacks must be thread-safe.
 
-For the advanced API, participating ranks must create exchanges in the same order and complete application phase synchronization before the first send. All senders must be closed or destroyed and all other progress workers must stop operating on the exchange before one thread calls `wait()` or `profile()`. An exchange must complete before destruction.
+For the asynchronous API, participating ranks must create exchanges in the same order and complete application phase synchronization before the first send. All senders must be closed or destroyed and all other progress workers must stop operating on the exchange before one thread calls `wait()` or `profile()`. An exchange must complete before destruction.
 
 ## Profiling
 
