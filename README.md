@@ -48,9 +48,9 @@ Application code needs one include:
 #include <lci-irregular/irregular_runtime.hpp>
 ```
 
-## Typed Active-Message Exchange
+## Typed Active Messages
 
-Records must be trivially copyable, trivially default constructible, trivially move constructible, and have alignment no greater than `std::max_align_t`. The receive and completion callbacks must not throw.
+Records must be trivially copyable, trivially default constructible, trivially move constructible, and have alignment no greater than `std::max_align_t`. The receive callback must not throw.
 
 ```cpp
 struct Record {
@@ -59,59 +59,82 @@ struct Record {
 };
 
 lci_irregular::IrregularRuntime runtime;
-std::atomic<std::size_t> received{0};
 
 auto am_handler = [&](lci_irregular::RecordBatchView<Record> records,
                       int source_rank) {
   for (std::size_t i = 0; i < records.size(); ++i) {
     process_record(records[i], source_rank); // Must be thread-safe.
   }
-  received.fetch_add(records.size(), std::memory_order_relaxed);
-};
-auto is_done = [&]() {
-  return received.load(std::memory_order_relaxed) == expected_records;
 };
 
-auto send_phase = [&](auto run_worker) {
-  // OpenMP is owned and configured by the application; any thread model can
-  // launch these workers as long as the calls execute concurrently.
-  #pragma omp parallel
-  {
-    const std::size_t worker_index = current_worker_index();
-    run_worker(worker_index, [&](auto am_send) {
-      #pragma omp for nowait
-      for (std::size_t i = 0; i < local_records.size(); ++i) {
-        const Record& record = local_records[i];
-        am_send(destination_for(record), record);
-      }
-    });
+lci_irregular::AmOptions am_options;
+am_options.profile_name = "my-phase";
+runtime.set_am_handler<Record>(am_handler, am_options);
+
+// OpenMP is owned and configured by the application. Any worker model can use
+// the same runtime API as long as concurrent workers use distinct indices.
+#pragma omp parallel
+{
+  const std::size_t worker_index = current_worker_index();
+
+  #pragma omp for nowait
+  for (std::size_t i = 0; i < local_records.size(); ++i) {
+    const Record& record = local_records[i];
+    runtime.post_am(worker_index, destination_for(record), record);
   }
-};
 
-const auto profile = runtime.am_exchange_until<Record>(am_handler, is_done, send_phase);
+  runtime.flush_remaining_buffers(worker_index);
+
+  while (runtime.received_record_count() < expected_records) {
+    runtime.progress(worker_index);
+  }
+
+  runtime.quiet(worker_index);
+}
+
+const auto profile = runtime.am_profile();
+runtime.clear_am_handler();
 ```
 
 `RecordBatchView` reads typed record values directly from the received packet
 without materializing a second array. The view is valid only during the receive
 callback; copy any records that must be retained after the callback returns.
 
-`am_exchange_start` is the primary asynchronous API. It returns an exchange handle so callers can create worker-local senders, drive progress, wait for completion, and collect profiling data explicitly. This form is intended for dynamic task graphs, work queues, and applications that need custom exchange lifecycles.
+`set_am_handler<Record>()` starts one typed active-message phase and registers
+the callback used by remote and loopback deliveries. The runtime supports one
+active phase at a time. All participating ranks must call `set_am_handler()` in
+the same phase order before any rank sends records for that phase.
 
-`am_exchange_until` is a convenience API for fork-join bulk phases. Its `send_phase` receives `run_worker`; each application worker calls `run_worker(worker_index, produce)`, and `produce(am_send)` submits typed records. The call creates the asynchronous exchange internally, includes registration, sender aggregation, progress, completion, and profiling, and returns an `AmExchangeProfile` after completion. Every runtime rank must call it in the same order.
+`post_am(worker_index, destination_rank, record)` appends one typed record to a
+runtime-owned per-worker, per-destination aggregation buffer. The runtime packs
+records into active-message batches and uses the configured loopback and upacket
+policy. `flush_remaining_buffers(worker_index)` posts that worker's nonempty
+aggregation buffers. It does not mean the network has completed those sends.
 
-Every rank must call `run_worker` at least once, including ranks with no outgoing records, so that each rank participates in progress. `send_phase` must wait for and join all `run_worker` calls before returning. `produce` and `am_send` must not escape their `run_worker` invocation. Concurrent calls must use distinct worker indices, and each index must remain stable for the full `run_worker` invocation. Each index maps modulo `device_count`; when profiling is enabled, it must be less than `profiling.worker_count`. A single worker is valid only when it produces all outgoing records for its rank.
+`received_record_count()` is maintained by the runtime after the registered
+handler returns, so it means records have been delivered to application logic.
+Applications still decide their own completion condition. Integer Sort, for
+example, waits until this count reaches the expected number of local keys.
 
-All participating workers, including progress-only workers, must launch concurrently because `run_worker` blocks until global completion. The application owns the worker threads and may use OpenMP or any other thread model; `am_handler` and `is_done` can run concurrently with those workers, so all application state they share must be thread-safe. Callable construction must not throw. Errors after registration are fail-fast: the library terminates rather than attempting distributed cancellation.
-
-Use `am_exchange_start` when the application needs direct control over sender creation, progress, completion, and finalization. Use `am_exchange_until` when the exchange is a single fork-join phase and the wrapper's worker contract fits the application.
+`quiet(worker_index)` progresses until all locally posted AM sends from the
+current runtime phase have reached LCI network completion. Call it before
+clearing the handler, replacing the phase, or destroying the runtime.
 
 ## Threading and Progress
 
 Only one `IrregularRuntime` may be live in a process. The application chooses its worker model and passes `device_count`; the library does not create threads and has no dependency on OpenMP.
 
-Each sender belongs to one worker and is not shared concurrently. Different workers may use different senders for the same exchange. Indexed `progress(worker_index)` maps workers to LCI devices and enables per-worker profiling. Receive callbacks can run concurrently on threads that call progress, so application state updated by callbacks must be thread-safe.
+Runtime-owned aggregation buffers are partitioned by worker index. Concurrent
+workers must use distinct stable worker indices, and each index maps modulo
+`device_count`. When profiling is enabled, each worker index must be less than
+`profiling.worker_count`. Indexed `progress(worker_index)` maps workers to LCI
+devices and enables per-worker profiling. Receive callbacks can run
+concurrently on threads that call progress, so application state updated by
+callbacks must be thread-safe.
 
-For the asynchronous API, participating ranks must create exchanges in the same order and complete application phase synchronization before the first send. All senders must be closed or destroyed and all other progress workers must stop operating on the exchange before one thread calls `wait()` or `profile()`. An exchange must complete before destruction.
+Before replacing a handler or destroying the runtime, every worker that posted
+records must call `flush_remaining_buffers()`, and the application must call
+`quiet()` after all local sends have been posted.
 
 ## Profiling
 
@@ -127,7 +150,7 @@ options.profiling.file_prefix = "my-run";
 lci_irregular::IrregularRuntime runtime(options);
 ```
 
-Each operation reports calls, records, typed payload bytes, and elapsed nanoseconds. `exchange.profile()` returns a snapshot after completion. Completed profiles are also queued by the runtime. `runtime.write_profiles()` writes them immediately; otherwise the runtime performs best-effort automatic output during destruction.
+Each operation reports calls, records, typed payload bytes, and elapsed nanoseconds. `runtime.am_profile()` returns a snapshot for the active phase after it has completed. Completed profiles are also queued by the runtime when `clear_am_handler()` runs. `runtime.write_profiles()` writes them immediately; otherwise the runtime performs best-effort automatic output during destruction.
 
 Output is one JSONL file per rank, named `<prefix>.rank-<rank>.jsonl`. No file or directory is created when profiling is disabled or no output directory is configured.
 

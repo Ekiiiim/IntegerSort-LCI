@@ -58,16 +58,16 @@ inline uint64_t elapsed_nanoseconds(std::chrono::steady_clock::time_point start)
 
 class AmProfileRecorder {
 public:
-  AmProfileRecorder(bool enabled, size_t worker_count, uint64_t exchange_sequence, std::string name)
-      : enabled_(enabled), exchange_sequence_(exchange_sequence), name_(std::move(name)),
+  AmProfileRecorder(bool enabled, size_t worker_count, uint64_t phase_sequence, std::string name)
+      : enabled_(enabled), phase_sequence_(phase_sequence), name_(std::move(name)),
         workers_(enabled ? worker_count : 0) {}
 
   bool enabled() const noexcept {
     return enabled_;
   }
 
-  void set_exchange_sequence(uint64_t exchange_sequence) noexcept {
-    exchange_sequence_ = exchange_sequence;
+  void set_phase_sequence(uint64_t phase_sequence) noexcept {
+    phase_sequence_ = phase_sequence;
   }
 
   void record(ProfileOperation operation, std::optional<size_t> worker_index, size_t records, size_t payload_bytes,
@@ -97,10 +97,10 @@ public:
     record(operation, worker_index, records, payload_bytes, elapsed_nanoseconds(start));
   }
 
-  AmExchangeProfile snapshot() const {
-    AmExchangeProfile result;
+  AmProfile snapshot() const {
+    AmProfile result;
     result.enabled = enabled_;
-    result.exchange_sequence = exchange_sequence_;
+    result.phase_sequence = phase_sequence_;
     result.name = name_;
     if (!enabled_) {
       return result;
@@ -131,7 +131,7 @@ private:
   }
 
   bool enabled_;
-  uint64_t exchange_sequence_;
+  uint64_t phase_sequence_;
   std::string name_;
   AtomicWorkerProfile aggregate_;
   std::vector<AtomicWorkerProfile> workers_;

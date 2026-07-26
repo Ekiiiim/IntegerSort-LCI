@@ -6,7 +6,7 @@
 
 namespace is_lci {
 
-void print_a2a_profile_report(const lci_irregular::AmExchangeProfile& profile, int iteration, int rank,
+void print_a2a_profile_report(const lci_irregular::AmProfile& profile, int iteration, int rank,
                               KeyCount local_key_count, double rank_time);
 
 } // namespace is_lci

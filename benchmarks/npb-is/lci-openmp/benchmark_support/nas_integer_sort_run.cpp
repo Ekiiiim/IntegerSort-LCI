@@ -259,8 +259,8 @@ void NasIntegerSortRun::configure_output() {
   setvbuf(stderr, nullptr, _IONBF, 0);
 }
 
-lci_irregular::AmExchangeOptions NasIntegerSortRun::am_exchange_options() const {
-  lci_irregular::AmExchangeOptions options;
+lci_irregular::AmOptions NasIntegerSortRun::am_exchange_options() const {
+  lci_irregular::AmOptions options;
   options.use_upacket = use_upacket_ == 1;
   options.use_loopback = use_loopback_ == 1;
   options.batch_records = 0;

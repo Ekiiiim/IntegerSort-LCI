@@ -7,7 +7,9 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <memory>
 #include <mutex>
+#include <string>
 #include <type_traits>
 #include <unordered_map>
 #include <utility>
@@ -58,8 +60,8 @@ struct IrregularRuntimeOptions {
   ProfilingOptions profiling;
 };
 
-// Per-exchange active-message aggregation settings.
-struct AmExchangeOptions {
+// Active-message aggregation settings for the current runtime AM phase.
+struct AmOptions {
   bool use_upacket = true;
   bool use_loopback = true;
   size_t batch_records = 0;
@@ -67,10 +69,10 @@ struct AmExchangeOptions {
 };
 
 class IrregularRuntime;
-template <typename Record, typename AmHandler, typename IsDone> class AmExchange;
 
 namespace detail {
 class AmExchangeStateBase;
+class AmRuntimeStateBase;
 void dispatch_am_message(lci::status_t status) noexcept;
 const std::vector<lci::device_t>& devices(const IrregularRuntime& runtime);
 const lci::device_t& control_device(const IrregularRuntime& runtime);
@@ -78,7 +80,7 @@ lci::rcomp_t remote_completion(const IrregularRuntime& runtime);
 uint32_t register_exchange(IrregularRuntime& runtime, AmExchangeStateBase* state);
 void deregister_exchange(IrregularRuntime& runtime, uint32_t exchange_id);
 AmExchangeStateBase* find_exchange(IrregularRuntime& runtime, uint32_t exchange_id);
-void submit_profile(IrregularRuntime& runtime, AmExchangeProfile profile);
+void submit_profile(IrregularRuntime& runtime, AmProfile profile);
 } // namespace detail
 
 class IrregularRuntime {
@@ -107,33 +109,21 @@ public:
     lci::reduce_x(sendbuf, recvbuf, count, element_size, op, root).device(control_device())();
   }
 
-  // Start the primary asynchronous active-message exchange. The returned handle
-  // owns the exchange lifetime; applications create per-worker senders, drive
-  // progress, and decide how workers are scheduled. Participating ranks must
-  // create exchanges in the same order and complete phase synchronization
-  // before the first send. Every sender must be closed or destroyed before
-  // wait(), profile(), or the exchange itself.
-  template <typename Record, typename AmHandler, typename IsDone>
-  AmExchange<Record, AmHandler, IsDone> am_exchange_start(AmHandler am_handler, IsDone is_done,
-                                                          AmExchangeOptions options = {});
+  // Register the receive logic for one typed active-message phase. A runtime
+  // supports one active phase at a time; call quiet() and clear_am_handler()
+  // before replacing a phase that has posted sends.
+  template <typename Record, typename AmHandler> void set_am_handler(AmHandler am_handler, AmOptions options = {});
+  void clear_am_handler();
 
-  // Run a blocking convenience wrapper around the asynchronous exchange for
-  // fork-join active-message phases. The application launches its workers in
-  // send_phase; each worker calls run_worker(worker_index, produce), and
-  // produce calls am_send(destination_rank, record). The runtime owns sender
-  // aggregation, flush, progress, completion, and profiling. am_handler and
-  // is_done may run concurrently and must be thread-safe. send_phase must not
-  // return until all run_worker calls have returned. Every rank must invoke at
-  // least one run_worker, including ranks with no outgoing records. produce and
-  // am_send must not escape their run_worker invocation. All participating
-  // workers, including progress-only workers, must launch concurrently.
-  // Concurrent workers require distinct indices that remain stable for each
-  // invocation and map modulo device_count. With profiling enabled, each index
-  // must be less than profiling.worker_count. Dynamic tasks and custom
-  // lifecycles should use am_exchange_start().
-  template <typename Record, typename AmHandler, typename IsDone, typename SendPhase>
-  AmExchangeProfile am_exchange_until(AmHandler am_handler, IsDone is_done, SendPhase send_phase,
-                                      AmExchangeOptions options = {});
+  // Send one typed record through runtime-owned per-worker aggregation buffers.
+  // Concurrent workers must use distinct stable worker indices.
+  template <typename Record> void post_am(size_t worker_index, int dest_rank, const Record& record);
+  void flush_remaining_buffers(size_t worker_index);
+  void quiet(size_t worker_index);
+
+  size_t received_record_count() const noexcept;
+  bool local_sends_drained() const noexcept;
+  AmProfile am_profile() const;
 
 private:
   friend const std::vector<lci::device_t>& detail::devices(const IrregularRuntime& runtime);
@@ -142,7 +132,7 @@ private:
   friend uint32_t detail::register_exchange(IrregularRuntime& runtime, detail::AmExchangeStateBase* state);
   friend void detail::deregister_exchange(IrregularRuntime& runtime, uint32_t exchange_id);
   friend detail::AmExchangeStateBase* detail::find_exchange(IrregularRuntime& runtime, uint32_t exchange_id);
-  friend void detail::submit_profile(IrregularRuntime& runtime, AmExchangeProfile profile);
+  friend void detail::submit_profile(IrregularRuntime& runtime, AmProfile profile);
 
   const lci::device_t& control_device() const;
   void allocate_devices(const IrregularRuntimeOptions& options);
@@ -151,6 +141,9 @@ private:
   uint32_t register_exchange(detail::AmExchangeStateBase* state);
   void deregister_exchange(uint32_t exchange_id);
   detail::AmExchangeStateBase* find_exchange(uint32_t exchange_id);
+  detail::AmRuntimeStateBase& active_am_state();
+  const detail::AmRuntimeStateBase& active_am_state() const;
+  void validate_worker_index(size_t worker_index) const;
 
   int rank_ = 0;
   int rank_count_ = 0;
@@ -160,10 +153,11 @@ private:
   uint32_t next_exchange_id_ = 1;
   std::mutex exchange_mutex_;
   std::unordered_map<uint32_t, detail::AmExchangeStateBase*> exchanges_;
+  std::unique_ptr<detail::AmRuntimeStateBase> active_am_state_;
   ProfilingOptions profiling_options_;
   std::mutex profile_mutex_;
   std::mutex profile_write_mutex_;
-  std::vector<AmExchangeProfile> pending_profiles_;
+  std::vector<AmProfile> pending_profiles_;
   bool profile_output_started_ = false;
 };
 

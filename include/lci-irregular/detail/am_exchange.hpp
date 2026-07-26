@@ -7,7 +7,6 @@
 
 #include <algorithm>
 #include <atomic>
-#include <chrono>
 #include <cstddef>
 #include <cstdint>
 #include <cstdio>
@@ -15,6 +14,8 @@
 #include <cstring>
 #include <exception>
 #include <limits>
+#include <memory>
+#include <mutex>
 #include <new>
 #include <optional>
 #include <stdexcept>
@@ -47,59 +48,6 @@ template <typename Record> size_t header_bytes() {
 template <typename Record> size_t message_bytes(size_t batch_records) {
   return header_bytes<Record>() + batch_records * sizeof(Record);
 }
-
-template <typename Record, typename AmHandler> class TypedAmExchangeState : public AmExchangeStateBase {
-public:
-  TypedAmExchangeState(AmHandler& am_handler, AmProfileRecorder& profile)
-      : am_handler_(am_handler), profile_(profile) {}
-
-  void set_exchange_id(uint32_t exchange_id) {
-    exchange_id_ = exchange_id;
-  }
-
-  void receive_message(int source_rank, const void* message, size_t message_bytes, bool loopback,
-                       std::optional<size_t> worker_index) noexcept override {
-    try {
-      receive_message_impl(source_rank, message, message_bytes, loopback, worker_index);
-    } catch (const std::exception& error) {
-      std::fprintf(stderr, "LCI irregular receive callback terminated after exception: %s\n", error.what());
-      std::terminate();
-    } catch (...) {
-      std::fprintf(stderr, "LCI irregular receive callback terminated after unknown exception\n");
-      std::terminate();
-    }
-  }
-
-private:
-  void receive_message_impl(int source_rank, const void* message, size_t message_bytes, bool loopback,
-                            std::optional<size_t> worker_index) {
-    AmMessageHeader header{};
-    std::memcpy(&header, message, sizeof(header));
-    if (header.exchange_id != exchange_id_) {
-      std::fprintf(stderr, "LCI irregular AM exchange id mismatch: got %u expected %u\n", header.exchange_id,
-                   exchange_id_);
-      std::abort();
-    }
-
-    size_t expected_bytes = detail::message_bytes<Record>(header.record_count);
-    if (message_bytes != expected_bytes) {
-      std::fprintf(stderr, "LCI irregular AM payload size mismatch: got %zu expected %zu\n", message_bytes,
-                   expected_bytes);
-      std::abort();
-    }
-
-    const char* bytes = static_cast<const char*>(message);
-    const void* payload = static_cast<const void*>(bytes + header_bytes<Record>());
-
-    profile_.measure(loopback ? ProfileOperation::loopback_receive : ProfileOperation::remote_receive, worker_index,
-                     header.record_count, header.record_count * sizeof(Record),
-                     [&] { am_handler_(RecordBatchView<Record>(payload, header.record_count), source_rank); });
-  }
-
-  uint32_t exchange_id_ = 0;
-  AmHandler& am_handler_;
-  AmProfileRecorder& profile_;
-};
 
 template <typename Record> void write_message_header(void* buffer, uint32_t exchange_id, size_t record_count) {
   if (record_count > std::numeric_limits<uint32_t>::max()) {
@@ -213,7 +161,7 @@ void post_send_buffer(int dest_rank, SendBuffer<Record>& send_buffer, int my_ran
   send_buffer.release();
 }
 
-template <typename Record> size_t choose_batch_records(AmExchangeOptions options) {
+template <typename Record> size_t choose_batch_records(AmOptions options) {
   size_t max_bcopy = lci::get_max_bcopy_size();
   size_t header = header_bytes<Record>();
   if (max_bcopy <= header) {
@@ -233,201 +181,65 @@ template <typename Record> size_t choose_batch_records(AmExchangeOptions options
   return options.batch_records;
 }
 
-} // namespace detail
+class AmRuntimeStateBase : public AmExchangeStateBase {
+public:
+  ~AmRuntimeStateBase() override = default;
 
-template <typename Record, typename AmHandler, typename IsDone> class AmExchange {
+  virtual void flush_worker(size_t worker_index) = 0;
+  virtual void quiet_worker(size_t worker_index) = 0;
+  virtual bool has_buffered_records() const = 0;
+  virtual bool local_sends_drained() const noexcept = 0;
+  virtual size_t received_record_count() const noexcept = 0;
+  virtual AmProfile profile() const = 0;
+  virtual void finalize_profile(IrregularRuntime& runtime) = 0;
+};
+
+template <typename Record> class TypedAmRuntimeStateBase : public AmRuntimeStateBase {
+public:
+  virtual void post_record(size_t worker_index, int dest_rank, const Record& record) = 0;
+};
+
+template <typename Record, typename AmHandler> class TypedAmRuntimeState : public TypedAmRuntimeStateBase<Record> {
   static_assert(std::is_trivially_copyable<Record>::value, "Record must be trivially copyable");
   static_assert(std::is_trivially_default_constructible<Record>::value,
                 "Record must be trivially default constructible under C++17");
   static_assert(alignof(Record) <= alignof(std::max_align_t),
                 "Record alignment greater than max_align_t is not supported");
 
-public:
-  class Sender {
-  public:
-    Sender(AmExchange& exchange, size_t worker_index)
-        : exchange_(&exchange), worker_index_(worker_index), rank_count_(exchange.rank_count()), rank_(exchange.rank()),
-          device_(exchange.device_for_worker(worker_index)), profiling_enabled_(exchange.profile_.enabled()),
-          use_upacket_(exchange.options_.use_upacket), use_loopback_(exchange.options_.use_loopback),
-          bytes_per_buffer_(exchange.bytes_per_buffer_),
-          remote_completion_(detail::remote_completion(*exchange.runtime_)),
-          send_buffers_(make_send_buffers(exchange.exchange_id_, exchange.batch_records_, rank_count_)) {
-      if (!use_upacket_) {
-        size_t storage_bytes = bytes_per_buffer_ * static_cast<size_t>(rank_count_);
-        fallback_storage_ = std::malloc(storage_bytes);
-        if (fallback_storage_ == nullptr && storage_bytes != 0) {
+  struct WorkerBuffers {
+    WorkerBuffers(uint32_t exchange_id, size_t batch_records, int rank_count, size_t bytes_per_buffer, bool use_upacket)
+        : send_buffers(make_send_buffers(exchange_id, batch_records, rank_count)) {
+      if (!use_upacket) {
+        const size_t storage_bytes = bytes_per_buffer * static_cast<size_t>(rank_count);
+        fallback_storage = std::malloc(storage_bytes);
+        if (fallback_storage == nullptr && storage_bytes != 0) {
           throw std::bad_alloc();
         }
       }
-      exchange_->active_sender_count_.fetch_add(1, std::memory_order_relaxed);
     }
 
-    ~Sender() noexcept {
-      if (exchange_ == nullptr) {
-        return;
-      }
-      try {
-        close();
-      } catch (const std::exception& error) {
-        std::fprintf(stderr, "LCI irregular AM sender cleanup terminated after exception: %s\n", error.what());
-        std::terminate();
-      } catch (...) {
-        std::fprintf(stderr, "LCI irregular AM sender cleanup terminated after unknown exception\n");
-        std::terminate();
-      }
+    ~WorkerBuffers() {
+      std::free(fallback_storage);
     }
 
-    Sender(const Sender&) = delete;
-    Sender& operator=(const Sender&) = delete;
+    WorkerBuffers(const WorkerBuffers&) = delete;
+    WorkerBuffers& operator=(const WorkerBuffers&) = delete;
 
-    Sender(Sender&& other) noexcept
-        : exchange_(other.exchange_), worker_index_(other.worker_index_), rank_count_(other.rank_count_),
-          rank_(other.rank_), device_(other.device_), profiling_enabled_(other.profiling_enabled_),
-          use_upacket_(other.use_upacket_), use_loopback_(other.use_loopback_),
-          bytes_per_buffer_(other.bytes_per_buffer_), remote_completion_(other.remote_completion_),
-          send_buffers_(std::move(other.send_buffers_)), fallback_storage_(other.fallback_storage_) {
-      other.exchange_ = nullptr;
-      other.fallback_storage_ = nullptr;
-    }
-
-    Sender& operator=(Sender&& other) noexcept {
-      if (this == &other) {
-        return *this;
-      }
-      cleanup();
-      exchange_ = other.exchange_;
-      worker_index_ = other.worker_index_;
-      rank_count_ = other.rank_count_;
-      rank_ = other.rank_;
-      device_ = other.device_;
-      profiling_enabled_ = other.profiling_enabled_;
-      use_upacket_ = other.use_upacket_;
-      use_loopback_ = other.use_loopback_;
-      bytes_per_buffer_ = other.bytes_per_buffer_;
-      remote_completion_ = other.remote_completion_;
-      send_buffers_ = std::move(other.send_buffers_);
-      fallback_storage_ = other.fallback_storage_;
-      other.exchange_ = nullptr;
-      other.fallback_storage_ = nullptr;
-      return *this;
-    }
-
-    // Flush buffered records and release this sender from its exchange.
-    void close() {
-      validate_active();
-      try {
-        flush();
-      } catch (...) {
-        release();
-        throw;
-      }
-      release();
-    }
-
-    void am_send(int dest_rank, const Record& record) {
-      validate_active();
-      if (dest_rank < 0 || dest_rank >= rank_count_) {
-        throw std::invalid_argument("LCI irregular AM route returned an invalid destination rank");
-      }
-
-      void* fallback_buffer = nullptr;
-      if (!use_upacket_) {
-        fallback_buffer = detail::byte_offset(fallback_storage_, static_cast<size_t>(dest_rank) * bytes_per_buffer_);
-      }
-
-      detail::SendBuffer<Record>& send_buffer = send_buffers_[static_cast<size_t>(dest_rank)];
-      detail::ProgressWorkerScope worker_scope(profiling_enabled_, worker_index_);
-      send_buffer.push(record, device_, fallback_buffer);
-      if (send_buffer.size() == send_buffer.capacity()) {
-        flush(dest_rank);
-      }
-    }
-
-    void flush() {
-      validate_active();
-      for (int i = 0; i < rank_count_; ++i) {
-        flush((rank_ + i) % rank_count_);
-      }
-    }
-
-  private:
-    static std::vector<detail::SendBuffer<Record>> make_send_buffers(uint32_t exchange_id, size_t batch_records,
-                                                                     int rank_count) {
-      std::vector<detail::SendBuffer<Record>> send_buffers;
-      send_buffers.reserve(static_cast<size_t>(rank_count));
-      for (int rank = 0; rank < rank_count; ++rank) {
-        send_buffers.emplace_back(exchange_id, batch_records);
-      }
-      return send_buffers;
-    }
-
-    void flush(int dest_rank) {
-      detail::SendBuffer<Record>& send_buffer = send_buffers_[static_cast<size_t>(dest_rank)];
-      if (send_buffer.empty()) {
-        return;
-      }
-
-      const size_t record_count = send_buffer.size();
-      const size_t payload_bytes = record_count * sizeof(Record);
-      exchange_->profile_.measure(detail::ProfileOperation::flush, worker_index_, record_count, payload_bytes, [&] {
-        detail::ProgressWorkerScope worker_scope(profiling_enabled_, worker_index_);
-        detail::post_send_buffer(dest_rank, send_buffers_[static_cast<size_t>(dest_rank)], rank_, device_,
-                                 use_loopback_, use_upacket_, exchange_->send_counter_, remote_completion_,
-                                 exchange_->state_, exchange_->posted_send_count_, worker_index_);
-      });
-    }
-
-    void validate_active() const {
-      if (exchange_ == nullptr) {
-        throw std::logic_error("LCI irregular AM sender used after move");
-      }
-    }
-
-    void release() noexcept {
-      if (exchange_ != nullptr) {
-        exchange_->active_sender_count_.fetch_sub(1, std::memory_order_relaxed);
-      }
-      std::free(fallback_storage_);
-      fallback_storage_ = nullptr;
-      exchange_ = nullptr;
-    }
-
-    void cleanup() noexcept {
-      if (exchange_ == nullptr) {
-        return;
-      }
-      try {
-        close();
-      } catch (...) {
-        std::terminate();
-      }
-    }
-
-    AmExchange* exchange_ = nullptr;
-    size_t worker_index_ = 0;
-    int rank_count_ = 0;
-    int rank_ = 0;
-    lci::device_t device_;
-    bool profiling_enabled_ = false;
-    bool use_upacket_ = true;
-    bool use_loopback_ = true;
-    size_t bytes_per_buffer_ = 0;
-    lci::rcomp_t remote_completion_ = 0;
-    std::vector<detail::SendBuffer<Record>> send_buffers_;
-    void* fallback_storage_ = nullptr;
+    std::vector<SendBuffer<Record>> send_buffers;
+    void* fallback_storage = nullptr;
   };
 
-  AmExchange(IrregularRuntime& runtime, AmHandler am_handler, IsDone is_done, AmExchangeOptions options)
-      : runtime_(&runtime), am_handler_(std::move(am_handler)), is_done_(std::move(is_done)),
+public:
+  TypedAmRuntimeState(IrregularRuntime& runtime, AmHandler am_handler, AmOptions options)
+      : runtime_(&runtime), am_handler_(std::move(am_handler)),
         profile_(runtime.profiling_enabled(), runtime.profiling_worker_count(), 0, options.profile_name),
-        state_(am_handler_, profile_), options_(options), batch_records_(detail::choose_batch_records<Record>(options)),
-        bytes_per_buffer_(detail::message_bytes<Record>(batch_records_)) {
+        options_(std::move(options)), batch_records_(choose_batch_records<Record>(options_)),
+        bytes_per_buffer_(message_bytes<Record>(batch_records_)) {
     send_counter_ = lci::alloc_counter();
     try {
       lci::counter_set(send_counter_, 0);
-      exchange_id_ = detail::register_exchange(runtime, &state_);
-      state_.set_exchange_id(exchange_id_);
-      profile_.set_exchange_sequence(exchange_id_);
+      exchange_id_ = register_exchange(runtime, this);
+      profile_.set_phase_sequence(exchange_id_);
       registered_ = true;
     } catch (...) {
       lci::free_comp(&send_counter_);
@@ -435,191 +247,205 @@ public:
     }
   }
 
-  ~AmExchange() {
-    if (active_sender_count_.load(std::memory_order_relaxed) != 0) {
-      std::fprintf(stderr, "LCI irregular AM exchange destroyed with active senders\n");
-      std::terminate();
-    }
-    if (!is_complete_without_progress()) {
-      std::fprintf(stderr, "LCI irregular AM exchange destroyed before completion\n");
-      std::terminate();
-    }
-    finalize_profile_once();
+  ~TypedAmRuntimeState() override {
     if (registered_) {
-      detail::deregister_exchange(*runtime_, exchange_id_);
+      deregister_exchange(*runtime_, exchange_id_);
     }
     if (!send_counter_.is_empty()) {
       lci::free_comp(&send_counter_);
     }
   }
 
-  AmExchange(const AmExchange&) = delete;
-  AmExchange& operator=(const AmExchange&) = delete;
-  AmExchange(AmExchange&&) = delete;
-  AmExchange& operator=(AmExchange&&) = delete;
+  TypedAmRuntimeState(const TypedAmRuntimeState&) = delete;
+  TypedAmRuntimeState& operator=(const TypedAmRuntimeState&) = delete;
 
-  Sender make_sender(size_t worker_index = 0) {
-    validate_profile_worker(worker_index);
-    return Sender(*this, worker_index);
-  }
-
-  void progress() {
-    profile_.measure(detail::ProfileOperation::progress, std::nullopt, 0, 0, [&] { runtime_->progress(); });
-  }
-
-  void progress(size_t worker_index) {
-    validate_profile_worker(worker_index);
-    profile_.measure(detail::ProfileOperation::progress, worker_index, 0, 0, [&] { runtime_->progress(worker_index); });
-  }
-
-  bool is_done() {
-    return invoke_is_done() && local_sends_complete();
-  }
-
-  // No other sender or progress worker may operate on this exchange while
-  // wait() or profile() finalizes its statistics and lifetime state.
-  void wait() {
-    validate_no_active_senders();
-    while (!is_done()) {
-      progress();
+  void receive_message(int source_rank, const void* message, size_t message_bytes, bool loopback,
+                       std::optional<size_t> worker_index) noexcept override {
+    try {
+      receive_message_impl(source_rank, message, message_bytes, loopback, worker_index);
+    } catch (const std::exception& error) {
+      std::fprintf(stderr, "LCI irregular receive callback terminated after exception: %s\n", error.what());
+      std::terminate();
+    } catch (...) {
+      std::fprintf(stderr, "LCI irregular receive callback terminated after unknown exception\n");
+      std::terminate();
     }
-    finalize_profile_once();
   }
 
-  AmExchangeProfile profile() {
-    validate_no_active_senders();
-    if (!is_complete_without_progress()) {
-      throw std::logic_error("LCI irregular AM profile requested before exchange completion");
+  void post_record(size_t worker_index, int dest_rank, const Record& record) override {
+    if (dest_rank < 0 || dest_rank >= runtime_->rank_count()) {
+      throw std::invalid_argument("LCI irregular AM destination rank is out of range");
     }
-    finalize_profile_once();
+
+    WorkerBuffers& buffers = worker_buffers(worker_index);
+    void* fallback_buffer = nullptr;
+    if (!options_.use_upacket) {
+      fallback_buffer = byte_offset(buffers.fallback_storage, static_cast<size_t>(dest_rank) * bytes_per_buffer_);
+    }
+
+    SendBuffer<Record>& send_buffer = buffers.send_buffers[static_cast<size_t>(dest_rank)];
+    ProgressWorkerScope worker_scope(profile_.enabled(), worker_index);
+    send_buffer.push(record, device_for_worker(worker_index), fallback_buffer);
+    if (send_buffer.size() == send_buffer.capacity()) {
+      flush_dest(buffers, worker_index, dest_rank);
+    }
+  }
+
+  void flush_worker(size_t worker_index) override {
+    WorkerBuffers& buffers = worker_buffers(worker_index);
+    const int rank = runtime_->rank();
+    const int rank_count = runtime_->rank_count();
+    for (int i = 0; i < rank_count; ++i) {
+      flush_dest(buffers, worker_index, (rank + i) % rank_count);
+    }
+  }
+
+  void quiet_worker(size_t worker_index) override {
+    while (!local_sends_drained()) {
+      runtime_->progress(worker_index);
+    }
+  }
+
+  bool local_sends_drained() const noexcept override {
+    return static_cast<size_t>(lci::counter_get(send_counter_)) >= posted_am_count_.load(std::memory_order_relaxed);
+  }
+
+  bool has_buffered_records() const override {
+    std::lock_guard<std::mutex> lock(worker_buffers_mutex_);
+    for (const auto& worker : worker_buffers_) {
+      if (!worker) {
+        continue;
+      }
+      for (const auto& send_buffer : worker->send_buffers) {
+        if (!send_buffer.empty()) {
+          return true;
+        }
+      }
+    }
+    return false;
+  }
+
+  size_t received_record_count() const noexcept override {
+    return received_record_count_.load(std::memory_order_relaxed);
+  }
+
+  AmProfile profile() const override {
     return profile_.snapshot();
   }
 
-private:
-  int rank() const {
-    return runtime_->rank();
+  void finalize_profile(IrregularRuntime& runtime) override {
+    std::call_once(profile_finalize_once_, [this, &runtime] {
+      if (profile_.enabled()) {
+        submit_profile(runtime, profile_.snapshot());
+      }
+    });
   }
 
-  int rank_count() const {
-    return runtime_->rank_count();
+private:
+  static std::vector<SendBuffer<Record>> make_send_buffers(uint32_t exchange_id, size_t batch_records, int rank_count) {
+    std::vector<SendBuffer<Record>> send_buffers;
+    send_buffers.reserve(static_cast<size_t>(rank_count));
+    for (int rank = 0; rank < rank_count; ++rank) {
+      send_buffers.emplace_back(exchange_id, batch_records);
+    }
+    return send_buffers;
+  }
+
+  void receive_message_impl(int source_rank, const void* message, size_t message_bytes, bool loopback,
+                            std::optional<size_t> worker_index) {
+    AmMessageHeader header{};
+    std::memcpy(&header, message, sizeof(header));
+    if (header.exchange_id != exchange_id_) {
+      std::fprintf(stderr, "LCI irregular AM phase id mismatch: got %u expected %u\n", header.exchange_id,
+                   exchange_id_);
+      std::abort();
+    }
+
+    size_t expected_bytes = detail::message_bytes<Record>(header.record_count);
+    if (message_bytes != expected_bytes) {
+      std::fprintf(stderr, "LCI irregular AM payload size mismatch: got %zu expected %zu\n", message_bytes,
+                   expected_bytes);
+      std::abort();
+    }
+
+    const char* bytes = static_cast<const char*>(message);
+    const void* payload = static_cast<const void*>(bytes + header_bytes<Record>());
+    const size_t record_count = header.record_count;
+
+    profile_.measure(loopback ? ProfileOperation::loopback_receive : ProfileOperation::remote_receive, worker_index,
+                     record_count, record_count * sizeof(Record),
+                     [&] { am_handler_(RecordBatchView<Record>(payload, record_count), source_rank); });
+    received_record_count_.fetch_add(record_count, std::memory_order_relaxed);
+  }
+
+  WorkerBuffers& worker_buffers(size_t worker_index) {
+    std::lock_guard<std::mutex> lock(worker_buffers_mutex_);
+    if (worker_index >= worker_buffers_.size()) {
+      worker_buffers_.resize(worker_index + 1);
+    }
+    std::unique_ptr<WorkerBuffers>& buffers = worker_buffers_[worker_index];
+    if (!buffers) {
+      buffers = std::make_unique<WorkerBuffers>(exchange_id_, batch_records_, runtime_->rank_count(), bytes_per_buffer_,
+                                                options_.use_upacket);
+    }
+    return *buffers;
   }
 
   const lci::device_t& device_for_worker(size_t worker_index) const {
-    const auto& runtime_devices = detail::devices(*runtime_);
+    const auto& runtime_devices = devices(*runtime_);
     return runtime_devices[worker_index % runtime_devices.size()];
   }
 
-  bool local_sends_complete() const {
-    return static_cast<size_t>(lci::counter_get(send_counter_)) >= posted_send_count_.load(std::memory_order_relaxed);
-  }
-
-  bool is_complete_without_progress() {
-    return invoke_is_done() && local_sends_complete();
-  }
-
-  bool invoke_is_done() noexcept {
-    try {
-      return is_done_();
-    } catch (const std::exception& error) {
-      std::fprintf(stderr, "LCI irregular completion callback terminated after exception: %s\n", error.what());
-      std::terminate();
-    } catch (...) {
-      std::fprintf(stderr, "LCI irregular completion callback terminated after unknown exception\n");
-      std::terminate();
+  void flush_dest(WorkerBuffers& buffers, size_t worker_index, int dest_rank) {
+    SendBuffer<Record>& send_buffer = buffers.send_buffers[static_cast<size_t>(dest_rank)];
+    if (send_buffer.empty()) {
+      return;
     }
-  }
 
-  void validate_profile_worker(size_t worker_index) const {
-    if (runtime_->profiling_enabled() && worker_index >= runtime_->profiling_worker_count()) {
-      throw std::invalid_argument("LCI irregular AM worker index exceeds profiling worker_count");
-    }
-  }
-
-  void validate_no_active_senders() const {
-    if (active_sender_count_.load(std::memory_order_relaxed) != 0) {
-      throw std::logic_error("LCI irregular AM senders must be closed before exchange finalization");
-    }
-  }
-
-  void finalize_profile_once() {
-    std::call_once(profile_finalize_once_, [this] {
-      if (profile_.enabled()) {
-        detail::submit_profile(*runtime_, profile_.snapshot());
-      }
+    const size_t record_count = send_buffer.size();
+    const size_t payload_bytes = record_count * sizeof(Record);
+    profile_.measure(ProfileOperation::flush, worker_index, record_count, payload_bytes, [&] {
+      ProgressWorkerScope worker_scope(profile_.enabled(), worker_index);
+      post_send_buffer(dest_rank, send_buffer, runtime_->rank(), device_for_worker(worker_index), options_.use_loopback,
+                       options_.use_upacket, send_counter_, remote_completion(*runtime_), *this, posted_am_count_,
+                       worker_index);
     });
   }
 
   IrregularRuntime* runtime_;
   AmHandler am_handler_;
-  IsDone is_done_;
-  detail::AmProfileRecorder profile_;
-  detail::TypedAmExchangeState<Record, AmHandler> state_;
-  AmExchangeOptions options_;
+  AmProfileRecorder profile_;
+  AmOptions options_;
   size_t batch_records_ = 0;
   size_t bytes_per_buffer_ = 0;
   lci::comp_t send_counter_ = nullptr;
-  std::atomic<size_t> posted_send_count_{0};
-  std::atomic<size_t> active_sender_count_{0};
+  std::atomic<size_t> posted_am_count_{0};
+  std::atomic<size_t> received_record_count_{0};
   uint32_t exchange_id_ = 0;
   bool registered_ = false;
-  std::once_flag profile_finalize_once_;
+  mutable std::once_flag profile_finalize_once_;
+  mutable std::mutex worker_buffers_mutex_;
+  std::vector<std::unique_ptr<WorkerBuffers>> worker_buffers_;
 };
 
-template <typename Record, typename AmHandler, typename IsDone>
-AmExchange<Record, AmHandler, IsDone> IrregularRuntime::am_exchange_start(AmHandler am_handler, IsDone is_done,
-                                                                          AmExchangeOptions options) {
-  return AmExchange<Record, AmHandler, IsDone>(*this, std::move(am_handler), std::move(is_done), options);
+} // namespace detail
+
+template <typename Record, typename AmHandler>
+void IrregularRuntime::set_am_handler(AmHandler am_handler, AmOptions options) {
+  clear_am_handler();
+  auto state = std::make_unique<detail::TypedAmRuntimeState<Record, AmHandler>>(*this, std::move(am_handler),
+                                                                                std::move(options));
+  active_am_state_ = std::move(state);
+  barrier();
 }
 
-template <typename Record, typename AmHandler, typename IsDone, typename SendPhase>
-AmExchangeProfile IrregularRuntime::am_exchange_until(AmHandler am_handler, IsDone is_done, SendPhase send_phase,
-                                                      AmExchangeOptions options) {
-  auto exchange = am_exchange_start<Record>(std::move(am_handler), std::move(is_done), options);
-  barrier();
-
-  constexpr size_t worker_calls_closed_bit = size_t{1} << (std::numeric_limits<size_t>::digits - 1);
-  constexpr size_t worker_calls_count_mask = worker_calls_closed_bit - 1;
-  std::atomic<size_t> active_worker_calls{0};
-  std::atomic<size_t> worker_calls{0};
-  auto run_worker = [&](size_t worker_index, auto&& produce) noexcept {
-    const size_t worker_call_state = active_worker_calls.fetch_add(1);
-    try {
-      if ((worker_call_state & worker_calls_closed_bit) != 0) {
-        active_worker_calls.fetch_sub(1);
-        throw std::logic_error("LCI irregular AM worker entered after send phase returned");
-      }
-      if ((worker_call_state & worker_calls_count_mask) == worker_calls_count_mask) {
-        active_worker_calls.fetch_sub(1);
-        throw std::overflow_error("LCI irregular AM active worker count overflow");
-      }
-      worker_calls.fetch_add(1);
-      auto sender = exchange.make_sender(worker_index);
-      auto am_send = [&](int destination_rank, const Record& record) { sender.am_send(destination_rank, record); };
-      std::forward<decltype(produce)>(produce)(am_send);
-      sender.close();
-      while (!exchange.is_done()) {
-        exchange.progress(worker_index);
-      }
-      active_worker_calls.fetch_sub(1);
-    } catch (...) {
-      detail::terminate_current_exception("LCI irregular AM worker terminated");
-    }
-  };
-
-  try {
-    std::move(send_phase)(run_worker);
-    const size_t worker_call_state = active_worker_calls.fetch_or(worker_calls_closed_bit);
-    if ((worker_call_state & worker_calls_count_mask) != 0) {
-      throw std::logic_error("LCI irregular AM send phase returned with active workers");
-    }
-    if (worker_calls.load() == 0) {
-      throw std::logic_error("LCI irregular AM send phase did not run a worker");
-    }
-    exchange.wait();
-    return exchange.profile();
-  } catch (...) {
-    detail::terminate_current_exception("LCI irregular AM send phase terminated");
+template <typename Record> void IrregularRuntime::post_am(size_t worker_index, int dest_rank, const Record& record) {
+  validate_worker_index(worker_index);
+  auto* state = dynamic_cast<detail::TypedAmRuntimeStateBase<Record>*>(&active_am_state());
+  if (state == nullptr) {
+    throw std::logic_error("LCI irregular AM record type does not match the active handler");
   }
+  state->post_record(worker_index, dest_rank, record);
 }
 
 } // namespace lci_irregular

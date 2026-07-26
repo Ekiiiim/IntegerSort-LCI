@@ -47,7 +47,7 @@ public:
 private:
   void configure_output();
   bool determine_active_rank_count();
-  lci_irregular::AmExchangeOptions am_exchange_options() const;
+  lci_irregular::AmOptions am_exchange_options() const;
   IntegerSortWorkspace& workspace();
   const IntegerSortWorkspace& workspace() const;
   void run_current_iteration_pipeline();
@@ -63,7 +63,7 @@ private:
 
   FullVerifySnapshot final_snapshot_{};
   BucketPlan current_bucket_plan_{};
-  lci_irregular::AmExchangeProfile current_redistribution_profile_{};
+  lci_irregular::AmProfile current_redistribution_profile_{};
   std::unique_ptr<IntegerSortWorkspace> workspace_;
 };
 

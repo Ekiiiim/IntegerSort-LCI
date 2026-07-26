@@ -20,7 +20,7 @@ constexpr std::array<ProfileOperation, 4> operations = {{
     {"self_copy", &lci_irregular::AmWorkerProfile::loopback_receive},
 }};
 
-void print_per_worker(const lci_irregular::AmExchangeProfile& profile, int iteration, int rank) {
+void print_per_worker(const lci_irregular::AmProfile& profile, int iteration, int rank) {
   std::printf("A2A per-worker profile (iteration %d, rank %d):\n", iteration, rank);
   std::printf("  worker  operation         calls    bytes         time_ms\n");
   for (size_t worker = 0; worker < profile.workers.size(); ++worker) {
@@ -33,7 +33,7 @@ void print_per_worker(const lci_irregular::AmExchangeProfile& profile, int itera
   }
 }
 
-void print_minmax(const lci_irregular::AmExchangeProfile& profile, int iteration, int rank) {
+void print_minmax(const lci_irregular::AmProfile& profile, int iteration, int rank) {
   if (profile.workers.empty()) {
     return;
   }
@@ -97,7 +97,7 @@ void print_minmax(const lci_irregular::AmExchangeProfile& profile, int iteration
 
 } // namespace
 
-void print_a2a_profile_report(const lci_irregular::AmExchangeProfile& profile, int iteration, int rank,
+void print_a2a_profile_report(const lci_irregular::AmProfile& profile, int iteration, int rank,
                               KeyCount local_key_count, double rank_time) {
   if (!profile.enabled) {
     return;

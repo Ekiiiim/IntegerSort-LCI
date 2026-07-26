@@ -28,9 +28,9 @@ struct AmWorkerProfile {
   AmOperationProfile loopback_receive;
 };
 
-struct AmExchangeProfile {
+struct AmProfile {
   bool enabled = false;
-  uint64_t exchange_sequence = 0;
+  uint64_t phase_sequence = 0;
   std::string name;
   AmWorkerProfile aggregate;
   std::vector<AmWorkerProfile> workers;

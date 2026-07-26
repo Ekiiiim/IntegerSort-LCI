@@ -1,6 +1,5 @@
 #include <lci-irregular/irregular_runtime.hpp>
 
-#include <atomic>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -21,27 +20,28 @@ int main() {
   }
 
   lci_irregular::IrregularRuntime runtime(runtime_options);
-  std::atomic<size_t> received_count{0};
   auto am_handler = [&](lci_irregular::RecordBatchView<Record> records, int source_rank) {
     for (size_t i = 0; i < records.size(); ++i) {
       Record record = records[i];
       std::printf("rank %d received key=%llu value=%.1f from rank %d\n", runtime.rank(),
                   static_cast<unsigned long long>(record.key), record.value, source_rank);
     }
-    received_count.fetch_add(records.size(), std::memory_order_relaxed);
   };
-  auto is_done = [&]() { return received_count.load(std::memory_order_relaxed) == 1; };
 
-  lci_irregular::AmExchangeOptions exchange_options;
-  exchange_options.profile_name = "typed-am-exchange";
+  lci_irregular::AmOptions am_options;
+  am_options.profile_name = "typed-am-exchange";
   const int destination = (runtime.rank() + 1) % runtime.rank_count();
-  auto send_phase = [&](auto run_worker) {
-    run_worker(0, [&](auto am_send) {
-      am_send(destination, Record{static_cast<uint64_t>(runtime.rank()), runtime.rank() + 0.5});
-    });
-  };
 
-  const auto profile = runtime.am_exchange_until<Record>(am_handler, is_done, send_phase, exchange_options);
+  runtime.set_am_handler<Record>(am_handler, am_options);
+  runtime.post_am(0, destination, Record{static_cast<uint64_t>(runtime.rank()), runtime.rank() + 0.5});
+  runtime.flush_remaining_buffers(0);
+  while (runtime.received_record_count() < 1) {
+    runtime.progress(0);
+  }
+  runtime.quiet(0);
+
+  const auto profile = runtime.am_profile();
+  runtime.clear_am_handler();
   if (profile.enabled) {
     std::printf("rank %d aggregate flush calls: %llu\n", runtime.rank(),
                 static_cast<unsigned long long>(profile.aggregate.flush.calls));

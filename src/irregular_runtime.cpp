@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <exception>
 #include <stdexcept>
 
 namespace lci_irregular {
@@ -60,6 +61,18 @@ IrregularRuntime::IrregularRuntime(IrregularRuntimeOptions options) : profiling_
 }
 
 IrregularRuntime::~IrregularRuntime() {
+  if (active_am_state_) {
+    if (active_am_state_->has_buffered_records()) {
+      std::fprintf(stderr, "LCI irregular runtime destroyed with unflushed AM records\n");
+      std::terminate();
+    }
+    if (!active_am_state_->local_sends_drained()) {
+      std::fprintf(stderr, "LCI irregular runtime destroyed before local AM sends drained\n");
+      std::terminate();
+    }
+    active_am_state_->finalize_profile(*this);
+    active_am_state_.reset();
+  }
   if (profiling_options_.enabled && !profiling_options_.output_directory.empty()) {
     try {
       write_profiles();
@@ -123,11 +136,51 @@ void IrregularRuntime::progress() const {
 }
 
 void IrregularRuntime::progress(size_t worker_index) const {
-  if (profiling_options_.enabled && worker_index >= profiling_options_.worker_count) {
-    throw std::invalid_argument("LCI irregular worker index exceeds profiling worker_count");
-  }
+  validate_worker_index(worker_index);
   detail::ProgressWorkerScope worker_scope(profiling_options_.enabled, worker_index);
   lci::progress_x().device(devices_[worker_index % devices_.size()])();
+}
+
+void IrregularRuntime::clear_am_handler() {
+  if (!active_am_state_) {
+    return;
+  }
+  if (active_am_state_->has_buffered_records()) {
+    throw std::logic_error("LCI irregular AM handler cleared with unflushed records");
+  }
+  if (!active_am_state_->local_sends_drained()) {
+    throw std::logic_error("LCI irregular AM handler cleared before local sends drained");
+  }
+  active_am_state_->finalize_profile(*this);
+  active_am_state_.reset();
+}
+
+void IrregularRuntime::flush_remaining_buffers(size_t worker_index) {
+  validate_worker_index(worker_index);
+  active_am_state().flush_worker(worker_index);
+}
+
+void IrregularRuntime::quiet(size_t worker_index) {
+  validate_worker_index(worker_index);
+  active_am_state().quiet_worker(worker_index);
+}
+
+size_t IrregularRuntime::received_record_count() const noexcept {
+  if (!active_am_state_) {
+    return 0;
+  }
+  return active_am_state_->received_record_count();
+}
+
+bool IrregularRuntime::local_sends_drained() const noexcept {
+  if (!active_am_state_) {
+    return true;
+  }
+  return active_am_state_->local_sends_drained();
+}
+
+AmProfile IrregularRuntime::am_profile() const {
+  return active_am_state().profile();
 }
 
 void IrregularRuntime::allocate_devices(const IrregularRuntimeOptions& options) {
@@ -182,6 +235,29 @@ detail::AmExchangeStateBase* IrregularRuntime::find_exchange(uint32_t exchange_i
   return iter == exchanges_.end() ? nullptr : iter->second;
 }
 
+detail::AmRuntimeStateBase& IrregularRuntime::active_am_state() {
+  if (!active_am_state_) {
+    throw std::logic_error("LCI irregular AM handler has not been registered");
+  }
+  return *active_am_state_;
+}
+
+const detail::AmRuntimeStateBase& IrregularRuntime::active_am_state() const {
+  if (!active_am_state_) {
+    throw std::logic_error("LCI irregular AM handler has not been registered");
+  }
+  return *active_am_state_;
+}
+
+void IrregularRuntime::validate_worker_index(size_t worker_index) const {
+  if (devices_.empty()) {
+    throw std::logic_error("LCI irregular runtime has no devices");
+  }
+  if (profiling_options_.enabled && worker_index >= profiling_options_.worker_count) {
+    throw std::invalid_argument("LCI irregular worker index exceeds profiling worker_count");
+  }
+}
+
 namespace detail {
 
 IrregularRuntime& active_runtime() {
@@ -216,7 +292,7 @@ AmExchangeStateBase* find_exchange(IrregularRuntime& runtime, uint32_t exchange_
   return runtime.find_exchange(exchange_id);
 }
 
-void submit_profile(IrregularRuntime& runtime, AmExchangeProfile profile) {
+void submit_profile(IrregularRuntime& runtime, AmProfile profile) {
   std::lock_guard<std::mutex> lock(runtime.profile_mutex_);
   runtime.pending_profiles_.push_back(std::move(profile));
 }

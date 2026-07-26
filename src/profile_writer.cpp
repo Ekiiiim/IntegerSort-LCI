@@ -60,11 +60,11 @@ constexpr NamedOperation operations[] = {
     {"loopback_receive", &AmWorkerProfile::loopback_receive},
 };
 
-void write_worker_rows(std::ostream& output, int rank, const AmExchangeProfile& profile, const std::string& scope,
+void write_worker_rows(std::ostream& output, int rank, const AmProfile& profile, const std::string& scope,
                        const AmWorkerProfile& worker) {
   for (const auto& operation : operations) {
     const AmOperationProfile& values = worker.*(operation.profile);
-    output << "{\"rank\":" << rank << ",\"exchange\":" << profile.exchange_sequence << ",\"name\":\""
+    output << "{\"rank\":" << rank << ",\"phase\":" << profile.phase_sequence << ",\"name\":\""
            << json_escape(profile.name) << "\",\"scope\":\"" << scope << "\",\"operation\":\"" << operation.name
            << "\",\"calls\":" << values.calls << ",\"records\":" << values.records
            << ",\"payload_bytes\":" << values.payload_bytes << ",\"elapsed_nanoseconds\":" << values.elapsed_nanoseconds
@@ -83,7 +83,7 @@ void IrregularRuntime::write_profiles() {
   }
 
   std::lock_guard<std::mutex> writer_lock(profile_write_mutex_);
-  std::vector<AmExchangeProfile> profiles;
+  std::vector<AmProfile> profiles;
   {
     std::lock_guard<std::mutex> queue_lock(profile_mutex_);
     profiles.swap(pending_profiles_);
