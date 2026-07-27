@@ -3,15 +3,18 @@
 #include <lci-irregular/detail/profiling.hpp>
 
 #include <algorithm>
+#include <atomic>
 #include <cstdio>
 #include <cstdlib>
 #include <exception>
+#include <limits>
 #include <stdexcept>
 
 namespace lci_irregular {
 namespace {
 
-IrregularRuntime* g_active_runtime = nullptr;
+IrregularRuntime* g_runtime_for_am = nullptr;
+std::atomic<uint64_t> g_next_am_cache_generation{1};
 
 } // namespace
 
@@ -26,7 +29,7 @@ IrregularRuntime::IrregularRuntime(IrregularRuntimeOptions options) : profiling_
       profiling_options_.file_prefix.find('\\') != std::string::npos) {
     throw std::invalid_argument("profiling file_prefix must be a file-name prefix");
   }
-  if (g_active_runtime != nullptr) {
+  if (g_runtime_for_am != nullptr) {
     throw std::logic_error("IrregularRuntime supports only one live instance per process");
   }
 
@@ -37,21 +40,13 @@ IrregularRuntime::IrregularRuntime(IrregularRuntimeOptions options) : profiling_
     rank_ = lci::get_rank_me();
     rank_count_ = lci::get_rank_n();
     allocate_devices(options);
-    am_dispatch_handler_ = lci::alloc_handler_x(detail::dispatch_am_message).zero_copy_am(true)();
-    am_rcomp_ = lci::register_rcomp(am_dispatch_handler_);
-    g_active_runtime = this;
+    g_runtime_for_am = this;
     barrier();
   } catch (...) {
-    if (g_active_runtime == this) {
-      g_active_runtime = nullptr;
+    if (g_runtime_for_am == this) {
+      g_runtime_for_am = nullptr;
     }
-    if (am_rcomp_ != 0) {
-      lci::deregister_rcomp(am_rcomp_);
-      am_rcomp_ = 0;
-    }
-    if (!am_dispatch_handler_.is_empty()) {
-      lci::free_comp(&am_dispatch_handler_);
-    }
+    release_am_transport();
     free_devices();
     if (lci_initialized) {
       lci::g_runtime_fina();
@@ -61,17 +56,19 @@ IrregularRuntime::IrregularRuntime(IrregularRuntimeOptions options) : profiling_
 }
 
 IrregularRuntime::~IrregularRuntime() {
-  if (active_am_state_) {
-    if (active_am_state_->has_buffered_records()) {
+  if (am_state_) {
+    if (am_state_->has_buffered_records()) {
       std::fprintf(stderr, "LCI irregular runtime destroyed with unflushed AM records\n");
       std::terminate();
     }
-    if (!active_am_state_->local_sends_drained()) {
+    if (!am_state_->local_sends_drained()) {
       std::fprintf(stderr, "LCI irregular runtime destroyed before local AM sends drained\n");
       std::terminate();
     }
-    active_am_state_->finalize_profile(*this);
-    active_am_state_.reset();
+    am_state_->finalize_profile(*this);
+    release_am_transport();
+    am_state_.reset();
+    clear_am_dispatch();
   }
   if (profiling_options_.enabled && !profiling_options_.output_directory.empty()) {
     try {
@@ -80,15 +77,9 @@ IrregularRuntime::~IrregularRuntime() {
       std::fprintf(stderr, "[lci-irregular] unable to write profiles: %s\n", error.what());
     }
   }
-  if (am_rcomp_ != 0) {
-    lci::deregister_rcomp(am_rcomp_);
-    am_rcomp_ = 0;
-  }
-  if (!am_dispatch_handler_.is_empty()) {
-    lci::free_comp(&am_dispatch_handler_);
-  }
+  release_am_transport();
   free_devices();
-  g_active_runtime = nullptr;
+  g_runtime_for_am = nullptr;
   lci::g_runtime_fina();
 }
 
@@ -129,7 +120,7 @@ void IrregularRuntime::broadcast_bytes(void* data, size_t bytes, int root) const
 }
 
 void IrregularRuntime::progress() const {
-  detail::ProgressWorkerScope worker_scope(profiling_options_.enabled, std::nullopt);
+  detail::ProfileWorkerScope worker_scope(profiling_options_.enabled, std::nullopt);
   for (const auto& device : devices_) {
     lci::progress_x().device(device)();
   }
@@ -137,50 +128,52 @@ void IrregularRuntime::progress() const {
 
 void IrregularRuntime::progress(size_t worker_index) const {
   validate_worker_index(worker_index);
-  detail::ProgressWorkerScope worker_scope(profiling_options_.enabled, worker_index);
+  detail::ProfileWorkerScope worker_scope(profiling_options_.enabled, worker_index);
   lci::progress_x().device(devices_[worker_index % devices_.size()])();
 }
 
 void IrregularRuntime::clear_am_handler() {
-  if (!active_am_state_) {
+  if (!am_state_) {
     return;
   }
-  if (active_am_state_->has_buffered_records()) {
+  if (am_state_->has_buffered_records()) {
     throw std::logic_error("LCI irregular AM handler cleared with unflushed records");
   }
-  if (!active_am_state_->local_sends_drained()) {
+  if (!am_state_->local_sends_drained()) {
     throw std::logic_error("LCI irregular AM handler cleared before local sends drained");
   }
-  active_am_state_->finalize_profile(*this);
-  active_am_state_.reset();
+  am_state_->finalize_profile(*this);
+  release_am_transport();
+  am_state_.reset();
+  clear_am_dispatch();
 }
 
 void IrregularRuntime::flush_remaining_buffers(size_t worker_index) {
   validate_worker_index(worker_index);
-  active_am_state().flush_worker(worker_index);
+  require_am_state().flush_worker(worker_index);
 }
 
 void IrregularRuntime::quiet(size_t worker_index) {
   validate_worker_index(worker_index);
-  active_am_state().quiet_worker(worker_index);
+  require_am_state().quiet_worker(worker_index);
 }
 
 size_t IrregularRuntime::received_record_count() const noexcept {
-  if (!active_am_state_) {
+  if (!am_state_) {
     return 0;
   }
-  return active_am_state_->received_record_count();
+  return am_state_->received_record_count();
 }
 
 bool IrregularRuntime::local_sends_drained() const noexcept {
-  if (!active_am_state_) {
+  if (!am_state_) {
     return true;
   }
-  return active_am_state_->local_sends_drained();
+  return am_state_->local_sends_drained();
 }
 
 AmProfile IrregularRuntime::am_profile() const {
-  return active_am_state().profile();
+  return require_am_state().profile();
 }
 
 void IrregularRuntime::allocate_devices(const IrregularRuntimeOptions& options) {
@@ -210,18 +203,62 @@ void IrregularRuntime::free_devices() {
   devices_.clear();
 }
 
-detail::AmRuntimeStateBase& IrregularRuntime::active_am_state() {
-  if (!active_am_state_) {
-    throw std::logic_error("LCI irregular AM handler has not been registered");
+void IrregularRuntime::register_am_transport(bool use_upacket) {
+  if (!lci_am_handler_.is_empty() || am_rcomp_ != 0) {
+    throw std::logic_error("LCI irregular AM transport is already registered");
   }
-  return *active_am_state_;
+
+  lci_am_handler_ = lci::alloc_handler_x(&IrregularRuntime::handle_incoming_am).zero_copy_am(use_upacket)();
+  try {
+    am_rcomp_ = lci::register_rcomp(lci_am_handler_);
+  } catch (...) {
+    lci::free_comp(&lci_am_handler_);
+    throw;
+  }
+  am_receive_uses_upacket_ = use_upacket;
 }
 
-const detail::AmRuntimeStateBase& IrregularRuntime::active_am_state() const {
-  if (!active_am_state_) {
+void IrregularRuntime::release_am_transport() noexcept {
+  if (am_rcomp_ != 0) {
+    lci::deregister_rcomp(am_rcomp_);
+    am_rcomp_ = 0;
+  }
+  if (!lci_am_handler_.is_empty()) {
+    lci::free_comp(&lci_am_handler_);
+  }
+  am_receive_uses_upacket_ = false;
+}
+
+void IrregularRuntime::clear_am_dispatch() noexcept {
+  am_record_type_.reset();
+  post_am_dispatch_ = nullptr;
+}
+
+uint64_t IrregularRuntime::allocate_am_cache_generation() {
+  uint64_t next = g_next_am_cache_generation.load(std::memory_order_relaxed);
+  while (true) {
+    if (next == std::numeric_limits<uint64_t>::max()) {
+      throw std::overflow_error("LCI irregular AM cache generation exhausted");
+    }
+    if (g_next_am_cache_generation.compare_exchange_weak(next, next + 1, std::memory_order_relaxed,
+                                                         std::memory_order_relaxed)) {
+      return next;
+    }
+  }
+}
+
+detail::AmRuntimeStateBase& IrregularRuntime::require_am_state() {
+  if (!am_state_) {
     throw std::logic_error("LCI irregular AM handler has not been registered");
   }
-  return *active_am_state_;
+  return *am_state_;
+}
+
+const detail::AmRuntimeStateBase& IrregularRuntime::require_am_state() const {
+  if (!am_state_) {
+    throw std::logic_error("LCI irregular AM handler has not been registered");
+  }
+  return *am_state_;
 }
 
 void IrregularRuntime::validate_worker_index(size_t worker_index) const {
@@ -233,15 +270,30 @@ void IrregularRuntime::validate_worker_index(size_t worker_index) const {
   }
 }
 
-namespace detail {
+void IrregularRuntime::handle_incoming_am(lci::status_t status) noexcept {
+  try {
+    if (g_runtime_for_am == nullptr) {
+      std::fprintf(stderr, "LCI irregular AM handler ran without an active runtime\n");
+      std::abort();
+    }
+    IrregularRuntime& runtime = *g_runtime_for_am;
 
-IrregularRuntime& active_runtime() {
-  if (g_active_runtime == nullptr) {
-    std::fprintf(stderr, "LCI irregular AM handler ran without an active runtime\n");
-    std::abort();
+    runtime.require_am_state().receive_message(status.get_rank(), status.get_buffer(), status.get_size(), false);
+    if (runtime.am_receive_uses_upacket_) {
+      lci::put_upacket(status.get_buffer());
+    } else {
+      lci::get_allocator()->deallocate(status.get_buffer());
+    }
+  } catch (const std::exception& error) {
+    std::fprintf(stderr, "LCI irregular AM handler terminated after exception: %s\n", error.what());
+    std::terminate();
+  } catch (...) {
+    std::fprintf(stderr, "LCI irregular AM handler terminated after unknown exception\n");
+    std::terminate();
   }
-  return *g_active_runtime;
 }
+
+namespace detail {
 
 const std::vector<lci::device_t>& devices(const IrregularRuntime& runtime) {
   return runtime.devices_;
@@ -253,10 +305,6 @@ const lci::device_t& control_device(const IrregularRuntime& runtime) {
 
 lci::rcomp_t remote_completion(const IrregularRuntime& runtime) {
   return runtime.am_rcomp_;
-}
-
-AmRuntimeStateBase& active_am_state(IrregularRuntime& runtime) {
-  return runtime.active_am_state();
 }
 
 void submit_profile(IrregularRuntime& runtime, AmProfile profile) {

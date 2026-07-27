@@ -20,7 +20,7 @@ int main() {
   }
 
   lci_irregular::IrregularRuntime runtime(runtime_options);
-  auto am_handler = [&](lci_irregular::RecordBatchView<Record> records, int source_rank) {
+  auto am_handler = [&](lci_irregular::AmRecords<Record> records, int source_rank) {
     for (size_t i = 0; i < records.size(); ++i) {
       Record record = records[i];
       std::printf("rank %d received key=%llu value=%.1f from rank %d\n", runtime.rank(),

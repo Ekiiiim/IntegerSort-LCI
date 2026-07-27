@@ -21,7 +21,7 @@ find_package(
   lib/cmake
   lib64/cmake)
 
-add_library(lci_irregular src/irregular_runtime.cpp src/am_dispatch.cpp src/profile_writer.cpp)
+add_library(lci_irregular src/irregular_runtime.cpp src/profile_writer.cpp)
 add_library(LCIIrregular::lci_irregular ALIAS lci_irregular)
 target_compile_features(lci_irregular PUBLIC cxx_std_17)
 target_include_directories(

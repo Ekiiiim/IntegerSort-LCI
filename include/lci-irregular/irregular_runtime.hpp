@@ -11,6 +11,7 @@
 #include <mutex>
 #include <string>
 #include <type_traits>
+#include <typeinfo>
 #include <utility>
 #include <vector>
 
@@ -19,7 +20,7 @@ namespace lci_irregular {
 // A callback-scoped typed view over an active-message payload. The underlying
 // packet contains byte storage, so records are loaded by value instead of being
 // exposed through a Record pointer.
-template <typename Record> class RecordBatchView {
+template <typename Record> class AmRecords {
   static_assert(std::is_trivially_copyable<Record>::value, "Record must be trivially copyable");
   static_assert(std::is_trivially_default_constructible<Record>::value,
                 "Record must be trivially default constructible under C++17");
@@ -27,7 +28,7 @@ template <typename Record> class RecordBatchView {
                 "Record must be trivially move constructible under C++17");
 
 public:
-  RecordBatchView(const void* bytes, size_t count) noexcept
+  AmRecords(const void* bytes, size_t count) noexcept
       : bytes_(static_cast<const unsigned char*>(bytes)), count_(count) {}
 
   size_t size() const noexcept {
@@ -71,11 +72,32 @@ class IrregularRuntime;
 
 namespace detail {
 class AmRuntimeStateBase;
-void dispatch_am_message(lci::status_t status) noexcept;
+
+class RecordTypeIdentity {
+public:
+  RecordTypeIdentity() = default;
+  explicit RecordTypeIdentity(const std::type_info& type) noexcept : type_(&type) {}
+
+  bool matches(const std::type_info& type) const noexcept {
+    return type_ != nullptr && (type_ == &type || *type_ == type);
+  }
+
+  void reset() noexcept {
+    type_ = nullptr;
+  }
+
+private:
+  const std::type_info* type_ = nullptr;
+};
+
+template <typename Record> RecordTypeIdentity record_type_identity() noexcept {
+  return RecordTypeIdentity(typeid(Record));
+}
+
+using ErasedAmPostFunction = void (*)(AmRuntimeStateBase&, size_t, int, const void*);
 const std::vector<lci::device_t>& devices(const IrregularRuntime& runtime);
 const lci::device_t& control_device(const IrregularRuntime& runtime);
 lci::rcomp_t remote_completion(const IrregularRuntime& runtime);
-AmRuntimeStateBase& active_am_state(IrregularRuntime& runtime);
 void submit_profile(IrregularRuntime& runtime, AmProfile profile);
 } // namespace detail
 
@@ -105,9 +127,10 @@ public:
     lci::reduce_x(sendbuf, recvbuf, count, element_size, op, root).device(control_device())();
   }
 
-  // Register the receive logic for one typed active-message phase. A runtime
-  // supports one active phase at a time; call quiet() and clear_am_handler()
-  // before replacing a phase that has posted sends.
+  // Register the receive logic for one typed active-message phase. The handler
+  // may accept AmRecords<Record> alone or with an int source-rank argument. A
+  // runtime supports one active phase at a time; call quiet() and
+  // clear_am_handler() before replacing a phase that has posted sends.
   template <typename Record, typename AmHandler> void set_am_handler(AmHandler am_handler, AmOptions options = {});
   void clear_am_handler();
 
@@ -125,33 +148,36 @@ private:
   friend const std::vector<lci::device_t>& detail::devices(const IrregularRuntime& runtime);
   friend const lci::device_t& detail::control_device(const IrregularRuntime& runtime);
   friend lci::rcomp_t detail::remote_completion(const IrregularRuntime& runtime);
-  friend detail::AmRuntimeStateBase& detail::active_am_state(IrregularRuntime& runtime);
   friend void detail::submit_profile(IrregularRuntime& runtime, AmProfile profile);
 
+  static void handle_incoming_am(lci::status_t status) noexcept;
   const lci::device_t& control_device() const;
   void allocate_devices(const IrregularRuntimeOptions& options);
   void free_devices();
+  void register_am_transport(bool use_upacket);
+  void release_am_transport() noexcept;
+  void clear_am_dispatch() noexcept;
+  static uint64_t allocate_am_cache_generation();
 
-  detail::AmRuntimeStateBase& active_am_state();
-  const detail::AmRuntimeStateBase& active_am_state() const;
+  detail::AmRuntimeStateBase& require_am_state();
+  const detail::AmRuntimeStateBase& require_am_state() const;
   void validate_worker_index(size_t worker_index) const;
 
   int rank_ = 0;
   int rank_count_ = 0;
   std::vector<lci::device_t> devices_;
-  lci::comp_t am_dispatch_handler_ = nullptr;
+  lci::comp_t lci_am_handler_ = nullptr;
   lci::rcomp_t am_rcomp_ = 0;
-  std::unique_ptr<detail::AmRuntimeStateBase> active_am_state_;
+  bool am_receive_uses_upacket_ = false;
+  std::unique_ptr<detail::AmRuntimeStateBase> am_state_;
+  detail::RecordTypeIdentity am_record_type_;
+  detail::ErasedAmPostFunction post_am_dispatch_ = nullptr;
   ProfilingOptions profiling_options_;
   std::mutex profile_mutex_;
   std::mutex profile_write_mutex_;
   std::vector<AmProfile> pending_profiles_;
   bool profile_output_started_ = false;
 };
-
-namespace detail {
-IrregularRuntime& active_runtime();
-} // namespace detail
 
 } // namespace lci_irregular
 
