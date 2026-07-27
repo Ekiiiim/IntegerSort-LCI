@@ -1,4 +1,4 @@
-#include <lci-irregular/detail/am_exchange_state.hpp>
+#include <lci-irregular/detail/am_dispatch.hpp>
 #include <lci-irregular/detail/profiling.hpp>
 
 #include <lci-irregular/irregular_runtime.hpp>

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <lci-irregular/detail/profile_types.hpp>
+#include <lci-irregular/am_profile.hpp>
 
 #include <array>
 #include <atomic>

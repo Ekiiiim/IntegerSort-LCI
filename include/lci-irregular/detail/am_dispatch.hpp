@@ -1,9 +1,9 @@
 #pragma once
 
+#include <lci-irregular/detail/am_message.hpp>
+
 #include <lci.hpp>
 
-#include <cstddef>
-#include <cstdint>
 #include <optional>
 
 namespace lci_irregular {
@@ -13,13 +13,9 @@ namespace detail {
 
 class AmRuntimeStateBase;
 
-struct AmMessageHeader {
-  uint32_t record_count;
-};
-
-class AmExchangeStateBase {
+class AmStateBase {
 public:
-  virtual ~AmExchangeStateBase() = default;
+  virtual ~AmStateBase() = default;
   virtual void receive_message(int source_rank, const void* message, size_t message_bytes, bool loopback,
                                std::optional<size_t> worker_index) noexcept = 0;
 };

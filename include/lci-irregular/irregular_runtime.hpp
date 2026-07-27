@@ -1,6 +1,6 @@
 #pragma once
 
-#include <lci-irregular/detail/profile_types.hpp>
+#include <lci-irregular/am_profile.hpp>
 
 #include <lci.hpp>
 
@@ -70,7 +70,6 @@ struct AmOptions {
 class IrregularRuntime;
 
 namespace detail {
-class AmExchangeStateBase;
 class AmRuntimeStateBase;
 void dispatch_am_message(lci::status_t status) noexcept;
 const std::vector<lci::device_t>& devices(const IrregularRuntime& runtime);
@@ -156,4 +155,4 @@ IrregularRuntime& active_runtime();
 
 } // namespace lci_irregular
 
-#include <lci-irregular/detail/am_exchange.hpp>
+#include <lci-irregular/detail/am_phase.hpp>
