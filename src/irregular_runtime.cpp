@@ -210,31 +210,6 @@ void IrregularRuntime::free_devices() {
   devices_.clear();
 }
 
-uint32_t IrregularRuntime::register_exchange(detail::AmExchangeStateBase* state) {
-  std::lock_guard<std::mutex> lock(exchange_mutex_);
-  if (next_exchange_id_ == 0) {
-    throw std::overflow_error("LCI irregular AM exchange id space exhausted");
-  }
-  const uint32_t exchange_id = next_exchange_id_;
-  const auto result = exchanges_.emplace(exchange_id, state);
-  if (!result.second) {
-    throw std::logic_error("LCI irregular AM exchange id is already active");
-  }
-  ++next_exchange_id_;
-  return exchange_id;
-}
-
-void IrregularRuntime::deregister_exchange(uint32_t exchange_id) {
-  std::lock_guard<std::mutex> lock(exchange_mutex_);
-  exchanges_.erase(exchange_id);
-}
-
-detail::AmExchangeStateBase* IrregularRuntime::find_exchange(uint32_t exchange_id) {
-  std::lock_guard<std::mutex> lock(exchange_mutex_);
-  auto iter = exchanges_.find(exchange_id);
-  return iter == exchanges_.end() ? nullptr : iter->second;
-}
-
 detail::AmRuntimeStateBase& IrregularRuntime::active_am_state() {
   if (!active_am_state_) {
     throw std::logic_error("LCI irregular AM handler has not been registered");
@@ -280,16 +255,8 @@ lci::rcomp_t remote_completion(const IrregularRuntime& runtime) {
   return runtime.am_rcomp_;
 }
 
-uint32_t register_exchange(IrregularRuntime& runtime, AmExchangeStateBase* state) {
-  return runtime.register_exchange(state);
-}
-
-void deregister_exchange(IrregularRuntime& runtime, uint32_t exchange_id) {
-  runtime.deregister_exchange(exchange_id);
-}
-
-AmExchangeStateBase* find_exchange(IrregularRuntime& runtime, uint32_t exchange_id) {
-  return runtime.find_exchange(exchange_id);
+AmRuntimeStateBase& active_am_state(IrregularRuntime& runtime) {
+  return runtime.active_am_state();
 }
 
 void submit_profile(IrregularRuntime& runtime, AmProfile profile) {

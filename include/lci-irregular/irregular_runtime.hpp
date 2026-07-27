@@ -11,7 +11,6 @@
 #include <mutex>
 #include <string>
 #include <type_traits>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -77,9 +76,7 @@ void dispatch_am_message(lci::status_t status) noexcept;
 const std::vector<lci::device_t>& devices(const IrregularRuntime& runtime);
 const lci::device_t& control_device(const IrregularRuntime& runtime);
 lci::rcomp_t remote_completion(const IrregularRuntime& runtime);
-uint32_t register_exchange(IrregularRuntime& runtime, AmExchangeStateBase* state);
-void deregister_exchange(IrregularRuntime& runtime, uint32_t exchange_id);
-AmExchangeStateBase* find_exchange(IrregularRuntime& runtime, uint32_t exchange_id);
+AmRuntimeStateBase& active_am_state(IrregularRuntime& runtime);
 void submit_profile(IrregularRuntime& runtime, AmProfile profile);
 } // namespace detail
 
@@ -129,18 +126,13 @@ private:
   friend const std::vector<lci::device_t>& detail::devices(const IrregularRuntime& runtime);
   friend const lci::device_t& detail::control_device(const IrregularRuntime& runtime);
   friend lci::rcomp_t detail::remote_completion(const IrregularRuntime& runtime);
-  friend uint32_t detail::register_exchange(IrregularRuntime& runtime, detail::AmExchangeStateBase* state);
-  friend void detail::deregister_exchange(IrregularRuntime& runtime, uint32_t exchange_id);
-  friend detail::AmExchangeStateBase* detail::find_exchange(IrregularRuntime& runtime, uint32_t exchange_id);
+  friend detail::AmRuntimeStateBase& detail::active_am_state(IrregularRuntime& runtime);
   friend void detail::submit_profile(IrregularRuntime& runtime, AmProfile profile);
 
   const lci::device_t& control_device() const;
   void allocate_devices(const IrregularRuntimeOptions& options);
   void free_devices();
 
-  uint32_t register_exchange(detail::AmExchangeStateBase* state);
-  void deregister_exchange(uint32_t exchange_id);
-  detail::AmExchangeStateBase* find_exchange(uint32_t exchange_id);
   detail::AmRuntimeStateBase& active_am_state();
   const detail::AmRuntimeStateBase& active_am_state() const;
   void validate_worker_index(size_t worker_index) const;
@@ -150,9 +142,6 @@ private:
   std::vector<lci::device_t> devices_;
   lci::comp_t am_dispatch_handler_ = nullptr;
   lci::rcomp_t am_rcomp_ = 0;
-  uint32_t next_exchange_id_ = 1;
-  std::mutex exchange_mutex_;
-  std::unordered_map<uint32_t, detail::AmExchangeStateBase*> exchanges_;
   std::unique_ptr<detail::AmRuntimeStateBase> active_am_state_;
   ProfilingOptions profiling_options_;
   std::mutex profile_mutex_;

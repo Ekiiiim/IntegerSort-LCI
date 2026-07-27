@@ -11,8 +11,9 @@ class IrregularRuntime;
 
 namespace detail {
 
+class AmRuntimeStateBase;
+
 struct AmMessageHeader {
-  uint32_t exchange_id;
   uint32_t record_count;
 };
 
@@ -25,6 +26,7 @@ public:
 
 IrregularRuntime& active_runtime();
 void dispatch_am_message(lci::status_t status) noexcept;
+AmRuntimeStateBase& active_am_state(IrregularRuntime& runtime);
 
 } // namespace detail
 } // namespace lci_irregular

@@ -49,13 +49,13 @@ template <typename Record> size_t message_bytes(size_t batch_records) {
   return header_bytes<Record>() + batch_records * sizeof(Record);
 }
 
-template <typename Record> void write_message_header(void* buffer, uint32_t exchange_id, size_t record_count) {
+template <typename Record> void write_message_header(void* buffer, size_t record_count) {
   if (record_count > std::numeric_limits<uint32_t>::max()) {
     std::fprintf(stderr, "LCI irregular AM batch has too many records: %zu\n", record_count);
     std::abort();
   }
 
-  AmMessageHeader header{exchange_id, static_cast<uint32_t>(record_count)};
+  AmMessageHeader header{static_cast<uint32_t>(record_count)};
   std::memcpy(buffer, &header, sizeof(header));
 }
 
@@ -78,8 +78,7 @@ inline void* byte_offset(void* ptr, size_t offset) {
 
 template <typename Record> class SendBuffer {
 public:
-  SendBuffer(uint32_t exchange_id, size_t capacity_records)
-      : exchange_id_(exchange_id), capacity_records_(capacity_records) {}
+  explicit SendBuffer(size_t capacity_records) : capacity_records_(capacity_records) {}
 
   void release() {
     buffer_ = nullptr;
@@ -107,7 +106,7 @@ public:
   }
 
   void finalize_header() {
-    write_message_header<Record>(buffer_, exchange_id_, record_count_);
+    write_message_header<Record>(buffer_, record_count_);
   }
 
   void push(const Record& record, lci::device_t device, void* fallback_buffer) {
@@ -121,7 +120,6 @@ public:
   }
 
 private:
-  uint32_t exchange_id_;
   size_t capacity_records_;
   void* buffer_ = nullptr;
   size_t record_count_ = 0;
@@ -207,8 +205,8 @@ template <typename Record, typename AmHandler> class TypedAmRuntimeState : publi
                 "Record alignment greater than max_align_t is not supported");
 
   struct WorkerBuffers {
-    WorkerBuffers(uint32_t exchange_id, size_t batch_records, int rank_count, size_t bytes_per_buffer, bool use_upacket)
-        : send_buffers(make_send_buffers(exchange_id, batch_records, rank_count)) {
+    WorkerBuffers(size_t batch_records, int rank_count, size_t bytes_per_buffer, bool use_upacket)
+        : send_buffers(make_send_buffers(batch_records, rank_count)) {
       if (!use_upacket) {
         const size_t storage_bytes = bytes_per_buffer * static_cast<size_t>(rank_count);
         fallback_storage = std::malloc(storage_bytes);
@@ -238,9 +236,6 @@ public:
     send_counter_ = lci::alloc_counter();
     try {
       lci::counter_set(send_counter_, 0);
-      exchange_id_ = register_exchange(runtime, this);
-      profile_.set_phase_sequence(exchange_id_);
-      registered_ = true;
     } catch (...) {
       lci::free_comp(&send_counter_);
       throw;
@@ -248,9 +243,6 @@ public:
   }
 
   ~TypedAmRuntimeState() override {
-    if (registered_) {
-      deregister_exchange(*runtime_, exchange_id_);
-    }
     if (!send_counter_.is_empty()) {
       lci::free_comp(&send_counter_);
     }
@@ -342,11 +334,11 @@ public:
   }
 
 private:
-  static std::vector<SendBuffer<Record>> make_send_buffers(uint32_t exchange_id, size_t batch_records, int rank_count) {
+  static std::vector<SendBuffer<Record>> make_send_buffers(size_t batch_records, int rank_count) {
     std::vector<SendBuffer<Record>> send_buffers;
     send_buffers.reserve(static_cast<size_t>(rank_count));
     for (int rank = 0; rank < rank_count; ++rank) {
-      send_buffers.emplace_back(exchange_id, batch_records);
+      send_buffers.emplace_back(batch_records);
     }
     return send_buffers;
   }
@@ -355,11 +347,6 @@ private:
                             std::optional<size_t> worker_index) {
     AmMessageHeader header{};
     std::memcpy(&header, message, sizeof(header));
-    if (header.exchange_id != exchange_id_) {
-      std::fprintf(stderr, "LCI irregular AM phase id mismatch: got %u expected %u\n", header.exchange_id,
-                   exchange_id_);
-      std::abort();
-    }
 
     size_t expected_bytes = detail::message_bytes<Record>(header.record_count);
     if (message_bytes != expected_bytes) {
@@ -385,7 +372,7 @@ private:
     }
     std::unique_ptr<WorkerBuffers>& buffers = worker_buffers_[worker_index];
     if (!buffers) {
-      buffers = std::make_unique<WorkerBuffers>(exchange_id_, batch_records_, runtime_->rank_count(), bytes_per_buffer_,
+      buffers = std::make_unique<WorkerBuffers>(batch_records_, runtime_->rank_count(), bytes_per_buffer_,
                                                 options_.use_upacket);
     }
     return *buffers;
@@ -421,8 +408,6 @@ private:
   lci::comp_t send_counter_ = nullptr;
   std::atomic<size_t> posted_am_count_{0};
   std::atomic<size_t> received_record_count_{0};
-  uint32_t exchange_id_ = 0;
-  bool registered_ = false;
   mutable std::once_flag profile_finalize_once_;
   mutable std::mutex worker_buffers_mutex_;
   std::vector<std::unique_ptr<WorkerBuffers>> worker_buffers_;
