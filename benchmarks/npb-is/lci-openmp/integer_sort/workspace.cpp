@@ -66,6 +66,7 @@ KeyRank* IntegerSortWorkspace::cumulative_by_key(KeyValue min_key_value) {
   return cumulative_storage_.data() - min_key_value;
 }
 
+// clang-format off: preserve C++-scope indentation for OpenMP pragmas.
 void IntegerSortWorkspace::clear_bucket_metadata() {
   int metadata_size = static_cast<int>(local_bucket_counts_.size());
 
@@ -92,5 +93,6 @@ void IntegerSortWorkspace::clear_frequency_range(KeyValue min_key_value, KeyValu
     cumulative_storage_[static_cast<size_t>(i)] = 0;
   }
 }
+// clang-format on
 
 } // namespace is_lci

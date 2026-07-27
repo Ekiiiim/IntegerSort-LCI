@@ -246,13 +246,15 @@ void full_verify(KeyValue* key_array, const FullVerifySnapshot& snapshot, int my
     out_of_order++;
   }
 
-/*  Confirm keys correctly sorted: count incorrectly sorted keys, if any */
+  /*  Confirm keys correctly sorted: count incorrectly sorted keys, if any */
+  // clang-format off: preserve C++-scope indentation for OpenMP pragmas.
   #pragma omp parallel for schedule(static) reduction(+ : out_of_order)
   for (KeyCount i = 1; i < snapshot.total_local_keys; i++) {
     if (key_array[i - 1] > key_array[i]) {
       out_of_order++;
     }
   }
+  // clang-format on
 
   if (out_of_order != 0) {
     printf("Processor %d:  Full_verify: number of keys out of sort: %d\n", my_rank, out_of_order);

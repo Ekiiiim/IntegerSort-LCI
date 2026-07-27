@@ -106,12 +106,14 @@ bool timer_enabled() {
   return g_timer_enabled != 0;
 }
 
+// clang-format off: preserve C++-scope indentation for OpenMP pragmas.
 void clear_timers() {
   #pragma omp parallel for schedule(static)
   for (int i = 1; i <= T_LAST; i++) {
     timer_clear(i);
   }
 }
+// clang-format on
 
 void start_total_timer() {
   timer_clear(T_TOTAL);
@@ -142,6 +144,7 @@ void timer_stop_if_enabled(int timer_id) {
   }
 }
 
+// clang-format off: preserve C++-scope indentation for OpenMP pragmas.
 void print_timer_summary(int comm_size, const lci_irregular::IrregularRuntime& runtime) {
   double t1[T_LAST + 1], tmin[T_LAST + 1], tsum[T_LAST + 1], tmax[T_LAST + 1];
 
@@ -163,6 +166,7 @@ void print_timer_summary(int comm_size, const lci_irregular::IrregularRuntime& r
     printf("\n");
   }
 }
+// clang-format on
 
 #endif
 

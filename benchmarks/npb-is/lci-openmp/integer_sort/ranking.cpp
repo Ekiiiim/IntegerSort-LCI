@@ -6,6 +6,7 @@
 
 namespace is_lci {
 
+// clang-format off: preserve C++-scope indentation for OpenMP pragmas.
 void compute_local_ranks(const std::atomic<KeyCount>* frequency_histogram, KeyRank* cumulative_ranks,
                          KeyValue min_key_value, KeyValue max_key_value) {
   const KeyValue key_value_range = max_key_value - min_key_value + 1;
@@ -48,5 +49,6 @@ void compute_local_ranks(const std::atomic<KeyCount>* frequency_histogram, KeyRa
     }
   }
 }
+// clang-format on
 
 } // namespace is_lci

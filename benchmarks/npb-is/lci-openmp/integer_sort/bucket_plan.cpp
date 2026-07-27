@@ -6,6 +6,7 @@
 
 namespace is_lci {
 
+// clang-format off: preserve C++-scope indentation for OpenMP pragmas.
 void count_local_buckets(const KeyValue* keys, KeyCount local_key_count, int bucket_shift,
                          KeyCount* local_bucket_counts, int num_buckets) {
   #pragma omp parallel
@@ -25,6 +26,7 @@ void count_local_buckets(const KeyValue* keys, KeyCount local_key_count, int buc
     }
   }
 }
+// clang-format on
 
 BucketPlan build_bucket_plan(const KeyCount* local_bucket_counts, const KeyCount* global_bucket_counts,
                              int* bucket_to_rank, int* first_bucket_by_rank, int* last_bucket_by_rank, int comm_size,
