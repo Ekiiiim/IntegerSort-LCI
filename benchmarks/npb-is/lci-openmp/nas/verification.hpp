@@ -5,7 +5,7 @@
 #include <atomic>
 
 namespace lci_irregular {
-class IrregularRuntime;
+class Runtime;
 }
 
 namespace is_lci {
@@ -27,6 +27,6 @@ void verify_partial_keys(int iteration, KeyValue min_key_value, KeyValue max_key
                          int* passed_verification);
 
 void full_verify(KeyValue* key_array, const FullVerifySnapshot& snapshot, int my_rank, int comm_size,
-                 const lci_irregular::IrregularRuntime& runtime, int* passed_verification);
+                 const lci_irregular::Runtime& runtime, int* passed_verification);
 
 } // namespace is_lci

@@ -199,7 +199,7 @@ void verify_partial_keys(int iteration, KeyValue min_key_value, KeyValue max_key
 }
 
 void full_verify(KeyValue* key_array, const FullVerifySnapshot& snapshot, int my_rank, int comm_size,
-                 const lci_irregular::IrregularRuntime& runtime, int* passed_verification) {
+                 const lci_irregular::Runtime& runtime, int* passed_verification) {
   const lci::device_t& control_device = lci_irregular::detail::control_device(runtime);
   lci::comp_t sync = lci::alloc_sync();
   lci::comp_t sync_send = lci::alloc_sync();

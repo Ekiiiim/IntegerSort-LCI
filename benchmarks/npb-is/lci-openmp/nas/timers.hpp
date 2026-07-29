@@ -1,7 +1,7 @@
 #pragma once
 
 namespace lci_irregular {
-class IrregularRuntime;
+class Runtime;
 }
 
 namespace is_lci {
@@ -24,6 +24,6 @@ double read_total_timer();
 double read_rank_timer();
 void timer_start_if_enabled(int timer_id);
 void timer_stop_if_enabled(int timer_id);
-void print_timer_summary(int comm_size, const lci_irregular::IrregularRuntime& runtime);
+void print_timer_summary(int comm_size, const lci_irregular::Runtime& runtime);
 
 } // namespace is_lci

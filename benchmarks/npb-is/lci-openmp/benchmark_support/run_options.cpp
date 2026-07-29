@@ -66,8 +66,8 @@ int read_loopback_flag() {
   return read_bool_env_flag("LOOPBACK", 1);
 }
 
-lci_irregular::IrregularRuntimeOptions read_lci_runtime_options() {
-  lci_irregular::IrregularRuntimeOptions options;
+lci_irregular::RuntimeOptions read_lci_runtime_options() {
+  lci_irregular::RuntimeOptions options;
   int threads_per_device = read_threads_per_device_option();
   if (threads_per_device <= 0) {
     threads_per_device = 1;

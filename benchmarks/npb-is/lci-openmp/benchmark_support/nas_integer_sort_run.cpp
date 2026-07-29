@@ -38,7 +38,7 @@ void print_final_results(int active_rank_count, int total_rank_count, double max
 
 namespace is_lci {
 
-NasIntegerSortRun::NasIntegerSortRun(lci_irregular::IrregularRuntime& runtime) : runtime_(runtime) {}
+NasIntegerSortRun::NasIntegerSortRun(lci_irregular::Runtime& runtime) : runtime_(runtime) {}
 
 NasIntegerSortRun::~NasIntegerSortRun() = default;
 
@@ -65,9 +65,9 @@ bool NasIntegerSortRun::initialize() {
     use_loopback_ = read_loopback_flag();
     timeron = check_timer_flag_from_file();
   }
-  runtime_.broadcast_int(&use_upacket_, 0);
-  runtime_.broadcast_int(&use_loopback_, 0);
-  runtime_.broadcast_int(&timeron, 0);
+  runtime_.broadcast(&use_upacket_, sizeof(use_upacket_), 0);
+  runtime_.broadcast(&use_loopback_, sizeof(use_loopback_), 0);
+  runtime_.broadcast(&timeron, sizeof(timeron), 0);
   set_timer_enabled(timeron);
   print_initial_status(runtime_.rank(), runtime_.rank_count(), active_rank_count_, use_upacket_, use_loopback_);
 
@@ -138,7 +138,7 @@ void NasIntegerSortRun::compute_global_bucket_sizes() {
 
   runtime_.reduce(workspace().local_bucket_counts(), workspace().global_bucket_counts(), NUM_BUCKETS + TEST_ARRAY_SIZE,
                   sizeof(KeyCount), sum_op_int, 0);
-  runtime_.broadcast_bytes(workspace().global_bucket_counts(), (NUM_BUCKETS + TEST_ARRAY_SIZE) * sizeof(KeyCount), 0);
+  runtime_.broadcast(workspace().global_bucket_counts(), (NUM_BUCKETS + TEST_ARRAY_SIZE) * sizeof(KeyCount), 0);
 
   timer_stop_if_enabled(T_RCOMM);
 }
@@ -233,7 +233,7 @@ bool NasIntegerSortRun::determine_active_rank_count() {
     if (runtime_.rank() == 0) {
       abort_for_non_power_of_two = should_abort_for_non_power_of_two_process_count(getenv("NPB_NPROCS_STRICT")) ? 1 : 0;
     }
-    runtime_.broadcast_int(&abort_for_non_power_of_two, 0);
+    runtime_.broadcast(&abort_for_non_power_of_two, sizeof(abort_for_non_power_of_two), 0);
 
     if (abort_for_non_power_of_two) {
       if (runtime_.rank() == 0) {

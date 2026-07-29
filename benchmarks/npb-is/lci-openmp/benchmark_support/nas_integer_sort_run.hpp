@@ -8,7 +8,7 @@
 #include <memory>
 
 namespace lci_irregular {
-class IrregularRuntime;
+class Runtime;
 }
 
 namespace is_lci {
@@ -17,7 +17,7 @@ namespace is_lci {
 // algorithm script; implementation files keep the benchmark and LCI details.
 class NasIntegerSortRun {
 public:
-  explicit NasIntegerSortRun(lci_irregular::IrregularRuntime& runtime);
+  explicit NasIntegerSortRun(lci_irregular::Runtime& runtime);
   ~NasIntegerSortRun();
 
   NasIntegerSortRun(const NasIntegerSortRun&) = delete;
@@ -52,7 +52,7 @@ private:
   const IntegerSortWorkspace& workspace() const;
   void run_current_iteration_pipeline();
 
-  lci_irregular::IrregularRuntime& runtime_;
+  lci_irregular::Runtime& runtime_;
   int active_rank_count_ = 0;
   int exit_code_ = 0;
   int current_iteration_ = 0;

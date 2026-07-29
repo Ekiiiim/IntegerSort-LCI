@@ -74,7 +74,7 @@ void write_worker_rows(std::ostream& output, int rank, const AmProfile& profile,
 
 } // namespace
 
-void IrregularRuntime::write_profiles() {
+void Runtime::write_profiles() {
   if (!profiling_options_.enabled) {
     throw std::logic_error("LCI irregular profiling is disabled");
   }

@@ -72,7 +72,7 @@ void timer_stop_if_enabled(int timer_id) {
   (void)timer_id;
 }
 
-void print_timer_summary(int comm_size, const lci_irregular::IrregularRuntime& runtime) {
+void print_timer_summary(int comm_size, const lci_irregular::Runtime& runtime) {
   (void)comm_size;
   (void)runtime;
 }
@@ -145,7 +145,7 @@ void timer_stop_if_enabled(int timer_id) {
 }
 
 // clang-format off: preserve C++-scope indentation for OpenMP pragmas.
-void print_timer_summary(int comm_size, const lci_irregular::IrregularRuntime& runtime) {
+void print_timer_summary(int comm_size, const lci_irregular::Runtime& runtime) {
   double t1[T_LAST + 1], tmin[T_LAST + 1], tsum[T_LAST + 1], tmax[T_LAST + 1];
 
   #pragma omp parallel for schedule(static)

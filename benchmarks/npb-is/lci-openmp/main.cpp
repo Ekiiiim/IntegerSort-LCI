@@ -49,7 +49,7 @@
 #include "nas/problem_config.hpp"
 
 int main() {
-  lci_irregular::IrregularRuntime runtime(is_lci::read_lci_runtime_options());
+  lci_irregular::Runtime runtime(is_lci::read_lci_runtime_options());
   is_lci::NasIntegerSortRun run(runtime);
   if (!run.initialize()) {
     return run.exit_code();

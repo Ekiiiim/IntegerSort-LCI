@@ -4,7 +4,6 @@
 
 #include <lci.hpp>
 
-#include <atomic>
 #include <cstddef>
 #include <cstring>
 
@@ -74,8 +73,8 @@ private:
 
 template <typename Record, typename AmReceiver>
 void post_send_buffer(int dest_rank, SendBuffer<Record>& send_buffer, int my_rank, lci::device_t device,
-                      bool use_loopback, bool use_upacket, lci::comp_t send_counter, lci::rcomp_t remote_completion,
-                      AmReceiver& receiver, std::atomic<size_t>& posted_send_count) {
+                      bool use_loopback, bool use_upacket, lci::comp_t send_completion, lci::rcomp_t remote_completion,
+                      AmReceiver& receiver) {
   if (send_buffer.empty()) {
     return;
   }
@@ -91,17 +90,13 @@ void post_send_buffer(int dest_rank, SendBuffer<Record>& send_buffer, int my_ran
 
   lci::status_t status;
   do {
-    status = lci::post_am_x(dest_rank, send_buffer.data(), send_buffer.size_in_bytes(), send_counter, remote_completion)
-                 .comp_semantic(lci::comp_semantic_t::network)
-                 .device(device)();
+    status =
+        lci::post_am_x(dest_rank, send_buffer.data(), send_buffer.size_in_bytes(), send_completion, remote_completion)
+            .comp_semantic(lci::comp_semantic_t::network)
+            .device(device)();
     progress_device(device);
   } while (status.is_retry());
 
-  if (status.is_posted()) {
-    posted_send_count.fetch_add(1, std::memory_order_relaxed);
-  } else if (use_upacket) {
-    lci::put_upacket(send_buffer.data());
-  }
   send_buffer.release();
 }
 

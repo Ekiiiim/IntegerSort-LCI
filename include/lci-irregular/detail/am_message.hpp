@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 
 namespace lci_irregular {
 namespace detail {
@@ -17,6 +18,11 @@ template <typename Record> size_t record_count_from_message_bytes(size_t bytes) 
     std::abort();
   }
   return bytes / sizeof(Record);
+}
+
+template <typename Record> void load_record(const void* message, size_t index, Record& record) noexcept {
+  const auto* bytes = static_cast<const unsigned char*>(message);
+  std::memcpy(&record, bytes + index * sizeof(Record), sizeof(Record));
 }
 
 } // namespace detail

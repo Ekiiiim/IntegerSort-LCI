@@ -64,12 +64,13 @@ Application code includes one public header:
 
 The common use pattern is:
 
-1. Construct `IrregularRuntime`.
+1. Construct `Runtime`.
 2. Register one typed active-message handler with `set_am_handler<T>()`.
-3. Send typed values with `post_am(worker_index, destination_rank, value)`.
-4. Flush each worker's remaining aggregation buffers.
-5. Progress until the application-specific receive condition is satisfied.
-6. Call `quiet()` before clearing the handler or destroying the runtime.
+3. Obtain one `WorkerHandler` for each logical worker.
+4. Send typed values with `worker.post_am(destination_rank, value)`.
+5. Flush each worker's remaining aggregation buffers.
+6. Progress until the application-specific receive condition is satisfied.
+7. Clear the active-message handler.
 
 ```cpp
 struct KeyValue {
@@ -77,13 +78,9 @@ struct KeyValue {
   std::uint64_t value;
 };
 
-lci_irregular::IrregularRuntime runtime;
+lci_irregular::Runtime runtime;
 
-auto handler = [&](lci_irregular::AmRecords<KeyValue> records) {
-  for (std::size_t i = 0; i < records.size(); ++i) {
-    process(records[i]);
-  }
-};
+auto handler = [&](const KeyValue& value) { process(value); };
 
 lci_irregular::AmOptions am_options;
 am_options.profile_name = "redistribute-keys";
@@ -92,91 +89,91 @@ runtime.set_am_handler<KeyValue>(handler, am_options);
 // The application owns threading. OpenMP is only one possible worker model.
 #pragma omp parallel
 {
-  const std::size_t worker_index = current_worker_index();
+  auto worker =
+      runtime.get_worker_handler(current_worker_index());
 
   #pragma omp for nowait
   for (std::size_t i = 0; i < local_keys.size(); ++i) {
     const KeyValue value = local_keys[i];
-    runtime.post_am(worker_index, destination_for(value), value);
+    worker.post_am(destination_for(value), value);
   }
 
-  runtime.flush_remaining_buffers(worker_index);
+  worker.flush();
 
-  while (runtime.received_record_count() < expected_receive_count) {
-    runtime.progress(worker_index);
+  while (runtime.recv_count() < expected_receive_count) {
+    worker.progress();
   }
-
-  runtime.quiet(worker_index);
 }
 
 const lci_irregular::AmProfile profile = runtime.am_profile();
 runtime.clear_am_handler();
 ```
 
-`set_am_handler<T>()` registers the receive logic for one active typed AM state. A runtime supports one AM state at a time. All participating ranks should register handlers in the same order before any rank sends data for that state.
+`set_am_handler<T>()` collectively registers the receive logic for one active typed AM phase. It includes the synchronization needed before any rank sends data. Calling it while another phase is active is an error.
 
-`post_am(worker_index, destination_rank, value)` appends one typed value to a runtime-owned aggregation buffer for that worker and destination. Concurrent workers must use distinct stable worker indices.
+`get_worker_handler(worker_index)` returns a lightweight, copyable, non-owning proxy for one stable logical worker. Concurrent workers must use distinct dense indices beginning at zero. A worker handler can be reused across AM phases but must not outlive its runtime.
 
-`flush_remaining_buffers(worker_index)` posts that worker's nonempty aggregation buffers. It does not wait for network completion.
+`worker.post_am(destination_rank, value)` appends one typed value to a runtime-owned aggregation buffer for that worker and destination.
 
-`received_record_count()` returns how many typed values have been delivered to the registered handler. Applications use this to implement their own completion condition.
+`worker.flush()` posts that worker's nonempty aggregation buffers. It does not wait for network completion.
 
-`quiet(worker_index)` progresses until locally posted AM sends for the current AM state have reached LCI network completion. Call it before `clear_am_handler()` or runtime destruction.
+`recv_count()` returns how many typed values have been processed by the registered handler. Applications use this to implement their own completion condition while calling `worker.progress()`.
 
-## AM Records
+`clear_am_handler()` locally ends the current phase. Call it only after every worker has flushed and the application-specific receive-completion condition has been met. It reports unflushed records as an error.
 
-Handlers receive `AmRecords<T>`:
+## AM Handlers
+
+The runtime invokes the handler once for each received value:
 
 ```cpp
-auto handler = [&](lci_irregular::AmRecords<MyType> records) {
-  for (std::size_t i = 0; i < records.size(); ++i) {
-    MyType value = records[i];
-  }
+auto handler = [&](const MyType& value) { process(value); };
+```
+
+Handlers may accept only the value, or additionally accept the source rank as a second `int` argument:
+
+```cpp
+auto handler = [&](const MyType& value, int source_rank) {
+  process(value, source_rank);
 };
 ```
 
-`AmRecords<T>` is a callback-scoped typed view over the active-message payload. It does not own the memory. The view is valid only while the handler is running.
+Use the single-argument form when receive processing does not depend on the sender. The underlying payload is byte storage owned by LCI, so the runtime loads each value with `memcpy` before invoking the handler instead of exposing a `T*`. This avoids requiring the LCI packet address to satisfy `T` pointer alignment.
 
-Handlers may accept only `AmRecords<T>`, or additionally accept the source rank as a second `int` argument. Use the single-argument form when receive processing does not depend on the sender.
-
-The underlying payload is byte storage owned by LCI, so `operator[]` loads each value with `memcpy` instead of exposing a `T*`. This avoids requiring the LCI packet address to satisfy `T` pointer alignment.
+When a handler accepts `const T&`, the reference is valid only for that invocation and must not be retained.
 
 Typed AM values must be:
 
 - trivially copyable
 - trivially default constructible
-- trivially move constructible
-- aligned no more strictly than `std::max_align_t`
 
-The receive handler must not throw.
+The receive handler must not throw. Different workers may invoke it concurrently while progressing their devices, so the handler and any state it accesses must support concurrent invocation.
 
 ## Runtime and Workers
 
-Only one `IrregularRuntime` may be live in a process. The runtime initializes and finalizes LCI, allocates LCI devices, registers the AM callback, and owns the current AM state.
+Only one `Runtime` may be live in a process. The runtime initializes and finalizes LCI, allocates LCI devices, registers the AM callback, and owns the current AM state. Construction and destruction are collective lifecycle operations: participating ranks must enter them in the same order.
 
-The library does not create threads. The application chooses a worker model and passes stable worker indices to:
+The library does not create threads. The application chooses a worker model and obtains one `WorkerHandler` for each stable worker index. Each handler provides:
 
-- `post_am(worker_index, ...)`
-- `flush_remaining_buffers(worker_index)`
-- `progress(worker_index)`
-- `quiet(worker_index)`
+- `post_am(destination_rank, value)`
+- `flush()`
+- `progress()`
 
 Each worker index selects a per-worker set of aggregation buffers and maps to an LCI device modulo `device_count`.
 
-Receive handlers may run on threads that call `progress()`, so application data touched by handlers must be thread-safe.
+Receive handlers may run on threads that call `WorkerHandler::progress()`, so application data touched by handlers must be thread-safe. `set_am_handler()` and `clear_am_handler()` must not run concurrently with worker operations.
 
 ## Profiling
 
 Profiling is disabled by default.
 
 ```cpp
-lci_irregular::IrregularRuntimeOptions options;
+lci_irregular::RuntimeOptions options;
 options.profiling.enabled = true;
 options.profiling.worker_count = application_worker_count;
 options.profiling.output_directory = "profiles";
 options.profiling.file_prefix = "my-run";
 
-lci_irregular::IrregularRuntime runtime(options);
+lci_irregular::Runtime runtime(options);
 ```
 
 Profiling records aggregate and per-worker statistics for:
@@ -188,7 +185,7 @@ Profiling records aggregate and per-worker statistics for:
 
 Each operation records calls, typed values, payload bytes, and elapsed nanoseconds.
 
-Per-worker receive profiling uses a lightweight thread-local scope. When `progress(worker_index)`, `post_am(worker_index, ...)`, or a worker flush enters library code, the library temporarily records that worker index for the current thread. If an AM receive is handled inside that scope, the receive is attributed to that worker. Calls made through unindexed `progress()` are recorded in the aggregate profile only.
+Per-worker receive profiling uses a lightweight thread-local scope. When a worker calls `progress()`, `post_am()`, or `flush()`, the library temporarily records that worker index for the current thread. If an AM receive is handled inside that scope, the receive is attributed to that worker.
 
 `runtime.am_profile()` returns a snapshot for the active AM state. `clear_am_handler()` queues the completed profile. `runtime.write_profiles()` writes queued profiles immediately; otherwise the runtime performs best-effort automatic output during destruction.
 

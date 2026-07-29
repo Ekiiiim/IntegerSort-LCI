@@ -53,23 +53,19 @@ public:
 
   virtual void receive_message(int source_rank, const void* message, size_t message_bytes, bool loopback) noexcept = 0;
   virtual void flush_worker(size_t worker_index) = 0;
-  virtual void quiet_worker(size_t worker_index) = 0;
   virtual bool has_buffered_records() const = 0;
-  virtual bool local_sends_drained() const noexcept = 0;
-  virtual size_t received_record_count() const noexcept = 0;
+  virtual size_t recv_count() const noexcept = 0;
   virtual AmProfile profile() const = 0;
-  virtual void finalize_profile(IrregularRuntime& runtime) = 0;
+  virtual void finalize_profile(Runtime& runtime) = 0;
 };
 
 template <typename Record, typename AmHandler> class TypedAmRuntimeState : public AmRuntimeStateBase {
   static_assert(std::is_trivially_copyable<Record>::value, "Record must be trivially copyable");
   static_assert(std::is_trivially_default_constructible<Record>::value,
                 "Record must be trivially default constructible under C++17");
-  static_assert(alignof(Record) <= alignof(std::max_align_t),
-                "Record alignment greater than max_align_t is not supported");
-  static_assert(std::is_invocable<AmHandler&, AmRecords<Record>>::value ||
-                    std::is_invocable<AmHandler&, AmRecords<Record>, int>::value,
-                "AM handler must accept AmRecords<Record>, with an optional source-rank argument");
+  static_assert(std::is_invocable<AmHandler&, const Record&>::value ||
+                    std::is_invocable<AmHandler&, const Record&, int>::value,
+                "AM handler must accept one Record, with an optional source-rank argument");
 
   struct WorkerBuffers {
     WorkerBuffers(size_t batch_records, int rank_count, size_t bytes_per_buffer, bool use_upacket)
@@ -104,25 +100,11 @@ template <typename Record, typename AmHandler> class TypedAmRuntimeState : publi
   };
 
 public:
-  TypedAmRuntimeState(IrregularRuntime& runtime, AmHandler am_handler, AmOptions options, uint64_t cache_generation)
+  TypedAmRuntimeState(Runtime& runtime, AmHandler am_handler, AmOptions options, uint64_t cache_generation)
       : runtime_(&runtime), am_handler_(std::move(am_handler)),
         profile_(runtime.profiling_enabled(), runtime.profiling_worker_count(), 0, options.profile_name),
         options_(std::move(options)), batch_records_(choose_batch_records<Record>(options_)),
-        bytes_per_buffer_(message_bytes<Record>(batch_records_)), cache_generation_(cache_generation) {
-    send_counter_ = lci::alloc_counter();
-    try {
-      lci::counter_set(send_counter_, 0);
-    } catch (...) {
-      lci::free_comp(&send_counter_);
-      throw;
-    }
-  }
-
-  ~TypedAmRuntimeState() override {
-    if (!send_counter_.is_empty()) {
-      lci::free_comp(&send_counter_);
-    }
-  }
+        bytes_per_buffer_(message_bytes<Record>(batch_records_)), cache_generation_(cache_generation) {}
 
   TypedAmRuntimeState(const TypedAmRuntimeState&) = delete;
   TypedAmRuntimeState& operator=(const TypedAmRuntimeState&) = delete;
@@ -167,16 +149,6 @@ public:
     }
   }
 
-  void quiet_worker(size_t worker_index) override {
-    while (!local_sends_drained()) {
-      runtime_->progress(worker_index);
-    }
-  }
-
-  bool local_sends_drained() const noexcept override {
-    return static_cast<size_t>(lci::counter_get(send_counter_)) >= posted_am_count_.load(std::memory_order_relaxed);
-  }
-
   bool has_buffered_records() const override {
     std::lock_guard<std::mutex> lock(worker_buffers_mutex_);
     for (const auto& worker : worker_buffers_) {
@@ -192,15 +164,15 @@ public:
     return false;
   }
 
-  size_t received_record_count() const noexcept override {
-    return received_record_count_.load(std::memory_order_relaxed);
+  size_t recv_count() const noexcept override {
+    return recv_count_.load(std::memory_order_acquire);
   }
 
   AmProfile profile() const override {
     return profile_.snapshot();
   }
 
-  void finalize_profile(IrregularRuntime& runtime) override {
+  void finalize_profile(Runtime& runtime) override {
     std::call_once(profile_finalize_once_, [this, &runtime] {
       if (profile_.enabled()) {
         submit_profile(runtime, profile_.snapshot());
@@ -221,16 +193,21 @@ private:
   void receive_message_impl(int source_rank, const void* message, size_t message_bytes, bool loopback) {
     const size_t record_count = detail::record_count_from_message_bytes<Record>(message_bytes);
 
-    profile_.measure_receive(loopback, record_count, record_count * sizeof(Record),
-                             [&] { invoke_am_handler(AmRecords<Record>(message, record_count), source_rank); });
-    received_record_count_.fetch_add(record_count, std::memory_order_relaxed);
+    profile_.measure_receive(loopback, record_count, record_count * sizeof(Record), [&] {
+      for (size_t i = 0; i < record_count; ++i) {
+        Record record;
+        detail::load_record(message, i, record);
+        invoke_am_handler(record, source_rank);
+      }
+    });
+    recv_count_.fetch_add(record_count, std::memory_order_acq_rel);
   }
 
-  void invoke_am_handler(AmRecords<Record> records, int source_rank) {
-    if constexpr (std::is_invocable<AmHandler&, AmRecords<Record>, int>::value) {
-      am_handler_(records, source_rank);
+  void invoke_am_handler(const Record& record, int source_rank) {
+    if constexpr (std::is_invocable<AmHandler&, const Record&, int>::value) {
+      am_handler_(record, source_rank);
     } else {
-      am_handler_(records);
+      am_handler_(record);
     }
   }
 
@@ -275,19 +252,17 @@ private:
     profile_.measure(ProfileOperation::flush, worker_index, record_count, payload_bytes, [&] {
       ProfileWorkerScope worker_scope(profile_.enabled(), worker_index);
       post_send_buffer(dest_rank, send_buffer, runtime_->rank(), device_for_worker(worker_index), options_.use_loopback,
-                       options_.use_upacket, send_counter_, remote_completion(*runtime_), *this, posted_am_count_);
+                       options_.use_upacket, send_completion(*runtime_), remote_completion(*runtime_), *this);
     });
   }
 
-  IrregularRuntime* runtime_;
+  Runtime* runtime_;
   AmHandler am_handler_;
   AmProfileRecorder profile_;
   AmOptions options_;
   size_t batch_records_ = 0;
   size_t bytes_per_buffer_ = 0;
-  lci::comp_t send_counter_ = nullptr;
-  std::atomic<size_t> posted_am_count_{0};
-  std::atomic<size_t> received_record_count_{0};
+  std::atomic<size_t> recv_count_{0};
   mutable std::once_flag profile_finalize_once_;
   mutable std::mutex worker_buffers_mutex_;
   std::vector<std::unique_ptr<WorkerBuffers>> worker_buffers_;
@@ -302,9 +277,10 @@ void post_record_erased(AmRuntimeStateBase& state, size_t worker_index, int dest
 
 } // namespace detail
 
-template <typename Record, typename AmHandler>
-void IrregularRuntime::set_am_handler(AmHandler am_handler, AmOptions options) {
-  clear_am_handler();
+template <typename Record, typename AmHandler> void Runtime::set_am_handler(AmHandler am_handler, AmOptions options) {
+  if (am_state_) {
+    throw std::logic_error("LCI irregular runtime already has an active AM handler");
+  }
   const bool use_upacket = options.use_upacket;
   const uint64_t cache_generation = allocate_am_cache_generation();
   auto state = std::make_unique<detail::TypedAmRuntimeState<Record, AmHandler>>(*this, std::move(am_handler),
@@ -323,13 +299,17 @@ void IrregularRuntime::set_am_handler(AmHandler am_handler, AmOptions options) {
   }
 }
 
-template <typename Record> void IrregularRuntime::post_am(size_t worker_index, int dest_rank, const Record& record) {
+template <typename Record> void Runtime::post_am_for_worker(size_t worker_index, int dest_rank, const Record& record) {
   validate_worker_index(worker_index);
   detail::AmRuntimeStateBase& state = require_am_state();
   if (!am_record_type_.matches(typeid(Record)) || post_am_dispatch_ == nullptr) {
     throw std::logic_error("LCI irregular AM record type does not match the active handler");
   }
   post_am_dispatch_(state, worker_index, dest_rank, &record);
+}
+
+template <typename Record> void WorkerHandler::post_am(int dest_rank, const Record& record) {
+  runtime_->post_am_for_worker(worker_index_, dest_rank, record);
 }
 
 } // namespace lci_irregular
